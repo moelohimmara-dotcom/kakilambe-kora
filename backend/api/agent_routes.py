@@ -288,7 +288,7 @@ def _sse_event(data: dict) -> str:
 def _emit_log(cycle_id: str, level: str, event: str):
     """Publie un log sur Redis et dans le logger structuré."""
     payload = {"cycle_id": cycle_id[:8], "level": level, "event": event}
-    logger.info("cycle_event", cycle_id=cycle_id[:8], level=level, msg=event)
+    logger.info("cycle_event", cycle_id=cycle_id[:8], msg=event)
     try:
         import redis as redis_sync
         r = redis_sync.from_url(settings.REDIS_URL, decode_responses=True)
