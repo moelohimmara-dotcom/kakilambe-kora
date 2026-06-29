@@ -60,6 +60,8 @@ function ProviderGauge({ provider }: { provider: ProviderHealth }) {
           {provider.available ? 'UP' : 'DOWN'}
         </span>
       </div>
+
+      {/* Latency bar */}
       <div className="mb-1">
         <div className="flex justify-between mb-1">
           <span className="font-mono text-[10px]" style={{ color: SYS_MUTED }}>Latence</span>
@@ -68,10 +70,16 @@ function ProviderGauge({ provider }: { provider: ProviderHealth }) {
           </span>
         </div>
         <div className="h-1 rounded-full overflow-hidden" style={{ background: '#1e1e1c' }}>
-          <div className="h-full rounded-full transition-all duration-700" style={{ width: `${100 - latencyPct}%`, background: latencyColor }} />
+          <div
+            className="h-full rounded-full transition-all duration-700"
+            style={{ width: `${100 - latencyPct}%`, background: latencyColor }}
+          />
         </div>
       </div>
-      <div className="font-mono text-[10px] mt-2" style={{ color: SYS_MUTED }}>priorité #{provider.priority}</div>
+
+      <div className="font-mono text-[10px] mt-2" style={{ color: SYS_MUTED }}>
+        priorité #{provider.priority}
+      </div>
     </div>
   )
 }
@@ -79,7 +87,10 @@ function ProviderGauge({ provider }: { provider: ProviderHealth }) {
 function ServiceBadge({ label, ok }: { label: string; ok: boolean }) {
   return (
     <div className="flex items-center gap-2 px-3 py-2 rounded-md border" style={{ borderColor: SYS_BORDER, background: SYS_SURFACE }}>
-      <span className="w-2 h-2 rounded-full shrink-0" style={{ background: ok ? '#48bb78' : SYS_RED }} />
+      <span
+        className="w-2 h-2 rounded-full shrink-0"
+        style={{ background: ok ? '#48bb78' : SYS_RED, boxShadow: ok ? '0 0 6px rgba(72,187,120,.5)' : '0 0 6px rgba(229,62,62,.5)' }}
+      />
       <span className="font-mono text-[12px]" style={{ color: SYS_TEXT }}>{label}</span>
       <span className="ml-auto font-mono text-[10px]" style={{ color: ok ? '#48bb78' : SYS_RED }}>{ok ? 'OK' : 'KO'}</span>
     </div>
@@ -101,33 +112,60 @@ export default function SystemDashboardPage() {
   const load = useCallback(async () => {
     try {
       const r = await fetch(`${BASE_URL}/health/system`, { cache: 'no-store' })
-      if (r.ok) setHealth(await r.json())
-    } catch { /* backend unavailable */ } finally {
+      if (r.ok) {
+        const d = await r.json()
+        setHealth(d)
+      }
+    } catch {
+      // backend unavailable — keep stale data
+    } finally {
       setLoading(false)
       setLastRefresh(new Date())
     }
   }, [])
 
-  useEffect(() => { load(); const id = setInterval(load, 30_000); return () => clearInterval(id) }, [load])
+  useEffect(() => {
+    load()
+    const id = setInterval(load, 30_000)
+    return () => clearInterval(id)
+  }, [load])
 
   const providers: ProviderHealth[] = health?.providers ?? [
-    { name: 'Groq',       model: 'llama-3.3-70b-versatile', available: true,  latency_ms: 320,  priority: 1 },
-    { name: 'Gemini',     model: 'gemini-2.0-flash',         available: true,  latency_ms: 780,  priority: 2 },
-    { name: 'Cerebras',   model: 'llama3.1-70b',             available: false, latency_ms: null, priority: 3 },
-    { name: 'OpenRouter', model: 'mistralai/mistral-7b',     available: true,  latency_ms: 1250, priority: 4 },
+    { name: 'Groq',        model: 'llama-3.3-70b-versatile',  available: true,  latency_ms: 320,  priority: 1 },
+    { name: 'Gemini',      model: 'gemini-2.0-flash',          available: true,  latency_ms: 780,  priority: 2 },
+    { name: 'Cerebras',    model: 'llama3.1-70b',              available: false, latency_ms: null, priority: 3 },
+    { name: 'OpenRouter',  model: 'mistralai/mistral-7b',      available: true,  latency_ms: 1250, priority: 4 },
   ]
 
   return (
     <div className="max-w-5xl">
+      {/* Page header */}
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="font-mono font-bold text-xl text-white">Dashboard système</h1>
-          <p className="font-mono text-[12px] mt-1" style={{ color: SYS_MUTED }}>État en temps réel de l'infrastructure KORA</p>
+          <p className="font-mono text-[12px] mt-1" style={{ color: SYS_MUTED }}>
+            État en temps réel de l'infrastructure KORA
+          </p>
         </div>
-        <button onClick={load} className="font-mono text-[11px] px-3 py-1.5 rounded border transition-colors" style={{ color: SYS_MUTED, borderColor: SYS_BORDER }}>
-          ↺ Actualiser
-        </button>
+        <div className="text-right">
+          <button
+            onClick={load}
+            className="font-mono text-[11px] px-3 py-1.5 rounded border transition-colors"
+            style={{ color: SYS_MUTED, borderColor: SYS_BORDER }}
+            onMouseEnter={e => (e.currentTarget.style.color = SYS_TEXT)}
+            onMouseLeave={e => (e.currentTarget.style.color = SYS_MUTED)}
+          >
+            ↺ Actualiser
+          </button>
+          {lastRefresh && (
+            <div className="font-mono text-[10px] mt-1" style={{ color: SYS_MUTED }}>
+              {lastRefresh.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* KPI strip */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         {[
           { label: 'Statut global', value: health ? (health.status === 'ok' ? 'OPÉRATIONNEL' : 'DÉGRADÉ') : '…', accent: health?.status === 'ok' ? '#48bb78' : SYS_RED },
@@ -141,6 +179,8 @@ export default function SystemDashboardPage() {
           </div>
         ))}
       </div>
+
+      {/* Services */}
       <h2 className="font-mono text-[11px] uppercase tracking-widest mb-3" style={{ color: SYS_MUTED }}>Services</h2>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-8">
         <ServiceBadge label="Redis"     ok={health?.redis     ?? true} />
@@ -148,7 +188,11 @@ export default function SystemDashboardPage() {
         <ServiceBadge label="WordPress" ok={health?.wordpress ?? false} />
         <ServiceBadge label="API KORA"  ok={!loading} />
       </div>
-      <h2 className="font-mono text-[11px] uppercase tracking-widest mb-3" style={{ color: SYS_MUTED }}>Fournisseurs LLM — chaîne de fallback</h2>
+
+      {/* Provider gauges */}
+      <h2 className="font-mono text-[11px] uppercase tracking-widest mb-3" style={{ color: SYS_MUTED }}>
+        Fournisseurs LLM — chaîne de fallback
+      </h2>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {providers.map(p => <ProviderGauge key={p.name} provider={p} />)}
       </div>
