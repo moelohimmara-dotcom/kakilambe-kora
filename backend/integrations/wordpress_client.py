@@ -31,18 +31,8 @@ class WordPressClient:
             return {"ok": True, "user": data.get("name"), "id": data.get("id")}
 
     async def publish_post(self, article: dict) -> str:
-        # Injecter l'image en tête du corps pour garantir son affichage
-        # indépendamment du support featured_image par le thème
         corps = article.get("corps", "")
-        wp_image_src = article.get("wp_image_src", "")
         titre = article.get("titre", "")
-        if wp_image_src:
-            img_html = (
-                f'<figure class="wp-block-image size-large aligncenter">'
-                f'<img src="{wp_image_src}" alt="{titre}" class="kora-featured-image" />'
-                f'</figure>\n\n'
-            )
-            corps = img_html + corps
 
         payload = {
             "title": titre,
