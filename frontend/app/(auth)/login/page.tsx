@@ -26,7 +26,8 @@ export default function LoginPage() {
       })
 
       if (res.ok) {
-        router.push('/dashboard')
+        const params = new URLSearchParams(window.location.search)
+        router.push(params.get('redirect') ?? '/dashboard')
       } else {
         const body = await res.json().catch(() => ({}))
         setError(body.detail || 'Identifiants incorrects')

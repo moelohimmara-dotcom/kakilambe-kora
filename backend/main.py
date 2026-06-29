@@ -14,8 +14,8 @@ app = FastAPI(
     title="KORA API",
     description="GuinéePress Intelligence — Backend KORA",
     version="1.0.0",
-    docs_url="/docs" if settings.DEBUG else None,
-    redoc_url=None,
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
 app.add_middleware(
