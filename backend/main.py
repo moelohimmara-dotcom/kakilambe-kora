@@ -101,11 +101,12 @@ async def health_provider(provider: str):
 
 @app.get("/health/tavily", tags=["system"])
 async def health_tavily():
+    if not settings.TAVILY_API_KEY:
+        return {"status": "error", "detail": "TAVILY_API_KEY not configured"}
     try:
         from tavily import TavilyClient
-        client = TavilyClient(api_key=settings.TAVILY_API_KEY)
-        client.search("Guinea Conakry", max_results=1)
-        return {"status": "ok"}
+        TavilyClient(api_key=settings.TAVILY_API_KEY)
+        return {"status": "ok", "detail": "Tavily key present"}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
 
