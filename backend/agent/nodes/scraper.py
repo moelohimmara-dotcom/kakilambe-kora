@@ -14,13 +14,12 @@ from core.logger import logger
 _NEWS_QUERIES = [
     "actualité Guinée Conakry aujourd'hui",
     "Guinea Conakry news today",
-    "politique économie Guinée 2026",
     "Afrique de l'Ouest dernières nouvelles",
-    "kakilambe.com actualité",
 ]
 
-_MAX_ARTICLES = 20
+_MAX_ARTICLES = 8      # réduit pour free tier (mémoire 512MB)
 _SCRAPE_TIMEOUT = 15   # secondes par URL
+_ENRICH_CONCURRENCY = 4  # max requêtes Firecrawl simultanées
 
 
 async def _fetch_content(url: str) -> str:
@@ -85,7 +84,14 @@ async def run(state: KoraState) -> KoraState:
             article["markdown_content"] = article.get("content", "")
         return article
 
-    enriched = await asyncio.gather(*[enrich(a) for a in unique])
+    # Enrichissement séquentiel par batch pour limiter la consommation mémoire
+    semaphore = asyncio.Semaphore(_ENRICH_CONCURRENCY)
+
+    async def enrich_limited(article: dict) -> dict:
+        async with semaphore:
+            return await enrich(article)
+
+    enriched = await asyncio.gather(*[enrich_limited(a) for a in unique])
 
     # Filtre : garder uniquement les articles avec contenu substantiel
     valid = [
