@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: kora-backend
+    env: python
+    region: oregon
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: DEBUG
+        value: "false"
+      - key: WP_BASE_URL
+        value: "https://kakilambe.com"
+      - key: CYCLE_TIMEZONE
+        value: "Africa/Conakry"
+      - key: GMAIL_RECIPIENT
+        value: "mistermarcket@gmail.com"
+      # Clés secrètes à injecter via le dashboard Render :
+      # GROQ_API_KEY, GEMINI_API_KEY, CEREBRAS_API_KEY, OPENROUTER_API_KEY
+      # TAVILY_API_KEY, WP_APP_PASSWORD, ADMIN_SECRET_KEY, API_SECRET_KEY
+      # REDIS_URL, DATABASE_URL
+    healthCheckPath: /health
+    autoDeploy: true
