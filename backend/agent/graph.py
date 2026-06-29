@@ -79,7 +79,7 @@ async def _check_next_node(state: KoraState) -> KoraState:
 
 # ── Construction du graphe ────────────────────────────────────────────────────
 
-def build_kora_graph():
+def build_kora_graph(semi_mode: bool = True):
     graph = StateGraph(KoraState)
 
     # Enregistrement des nœuds
@@ -150,16 +150,19 @@ def build_kora_graph():
     # Arête 7 : rapport → END
     graph.add_edge("send_report", END)
 
-    # Compilation avec :
-    # - MemorySaver : permet le resume après interruption HITL
-    # - interrupt_before=["publish_wordpress"] : pause avant chaque publication en mode semi
-    compiled = graph.compile(
-        checkpointer=MemorySaver(),
-        interrupt_before=["publish_wordpress"],
-    )
+    # Mode semi : interrupt avant publish + MemorySaver pour le resume HITL
+    # Mode auto : pas d'interrupt, publication directe
+    if semi_mode:
+        compiled = graph.compile(
+            checkpointer=MemorySaver(),
+            interrupt_before=["publish_wordpress"],
+        )
+    else:
+        compiled = graph.compile()
 
-    logger.info("kora_graph_compiled")
+    logger.info("kora_graph_compiled", semi_mode=semi_mode)
     return compiled
 
 
-kora_graph = build_kora_graph()
+kora_graph_semi = build_kora_graph(semi_mode=True)
+kora_graph_auto = build_kora_graph(semi_mode=False)

@@ -66,7 +66,8 @@ async def run_cycle(body: RunRequest):
     config = {"configurable": {"thread_id": cycle_id}}
 
     async def _run():
-        from agent.graph import kora_graph
+        from agent.graph import kora_graph_semi, kora_graph_auto
+        kora_graph = kora_graph_semi if body.mode == "semi" else kora_graph_auto
         try:
             _emit_log(cycle_id, "INFO", f"Cycle {body.mode.upper()} démarré")
             result = await kora_graph.ainvoke(initial_state, config=config)
@@ -203,7 +204,7 @@ async def resume_cycle(cycle_id: str):
     _cycles[cycle_id]["status"] = "RUNNING"
 
     async def _resume():
-        from agent.graph import kora_graph
+        from agent.graph import kora_graph_semi as kora_graph
         try:
             _emit_log(cycle_id, "HITL", "Validation humaine accordée — reprise de la publication")
             # Injecter l'approbation dans l'état via update
