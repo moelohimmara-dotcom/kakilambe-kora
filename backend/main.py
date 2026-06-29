@@ -20,7 +20,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_origins=settings.allowed_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -45,7 +45,6 @@ async def health():
 
 @app.get("/health/db", tags=["system"])
 async def health_db():
-    """Test database connectivity."""
     try:
         from db.connection import get_db
         from sqlalchemy import text
@@ -54,3 +53,64 @@ async def health_db():
         return {"status": "ok", "db": "connected"}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
+
+@app.get("/health/database", tags=["system"])
+async def health_database():
+    return await health_db()
+
+@app.get("/health/redis", tags=["system"])
+async def health_redis():
+    try:
+        import redis.asyncio as aioredis
+        url = settings.REDIS_URL
+        if not url:
+            return {"status": "error", "detail": "REDIS_URL not configured"}
+        r = aioredis.from_url(url, socket_timeout=3)
+        await r.ping()
+        await r.aclose()
+        return {"status": "ok"}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+@app.get("/health/wordpress", tags=["system"])
+async def health_wordpress():
+    try:
+        import httpx, base64
+        token = base64.b64encode(f"{settings.WP_USERNAME}:{settings.WP_APP_PASSWORD}".encode()).decode()
+        async with httpx.AsyncClient(timeout=8) as client:
+            r = await client.get(f"{settings.WP_BASE_URL}/wp-json/wp/v2/posts?per_page=1",
+                                 headers={"Authorization": f"Basic {token}"})
+        if r.status_code < 400:
+            return {"status": "ok"}
+        return {"status": "error", "detail": f"HTTP {r.status_code}"}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+@app.get("/health/providers/{provider}", tags=["system"])
+async def health_provider(provider: str):
+    keys = {
+        "groq": settings.GROQ_API_KEY,
+        "gemini": settings.GEMINI_API_KEY,
+        "cerebras": settings.CEREBRAS_API_KEY,
+        "openrouter": settings.OPENROUTER_API_KEY,
+    }
+    key = keys.get(provider.lower(), "")
+    if not key:
+        return {"status": "error", "detail": f"{provider} API key not configured"}
+    return {"status": "ok", "provider": provider}
+
+@app.get("/health/tavily", tags=["system"])
+async def health_tavily():
+    try:
+        from tavily import TavilyClient
+        client = TavilyClient(api_key=settings.TAVILY_API_KEY)
+        client.search("Guinea Conakry", max_results=1)
+        return {"status": "ok"}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+@app.get("/health/fal", tags=["system"])
+async def health_fal():
+    if not settings.IMAGE_GEN_API_KEY:
+        return {"status": "error", "detail": "IMAGE_GEN_API_KEY not configured"}
+    return {"status": "ok", "detail": "fal.ai key present"}

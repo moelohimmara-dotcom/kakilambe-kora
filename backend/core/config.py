@@ -1,24 +1,16 @@
 from pydantic_settings import BaseSettings
-from pydantic import field_validator
 from typing import List, Optional
 
 
 class Settings(BaseSettings):
     # ── App ─────────────────────────────────────────────────────────────────
     DEBUG: bool = False
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "https://kakilambe.com"]
+    # Comma-separated string to avoid pydantic-settings List[str] parsing issues
+    ALLOWED_ORIGINS: str = "http://localhost:3000,https://kakilambe.com"
 
-    @field_validator("ALLOWED_ORIGINS", mode="before")
-    @classmethod
-    def parse_origins(cls, v):
-        if isinstance(v, str):
-            # Accepte soit JSON ["a","b"] soit virgule-séparée a,b
-            v = v.strip()
-            if v.startswith("["):
-                import json
-                return json.loads(v)
-            return [o.strip() for o in v.split(",") if o.strip()]
-        return v
+    @property
+    def allowed_origins_list(self) -> List[str]:
+        return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
 
     # ── LLM Providers ───────────────────────────────────────────────────────
     GROQ_API_KEY: str = ""
