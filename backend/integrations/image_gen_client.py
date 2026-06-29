@@ -1,34 +1,32 @@
+import urllib.parse
 from typing import Optional
-from core.config import settings
+
+import httpx
+
 from core.logger import logger
 
 
 class ImageGenClient:
+    """Génération d'images via pollinations.ai (gratuit, sans clé API)."""
+
     async def generate(self, prompt: str) -> Optional[str]:
-        provider = settings.IMAGE_GEN_PROVIDER.lower()
-        if provider == "fal":
-            return await self._fal_generate(prompt)
-        logger.warning("unknown_image_provider", provider=provider)
-        return None
+        return await self._pollinations_generate(prompt)
 
-    async def _fal_generate(self, prompt: str) -> Optional[str]:
+    async def _pollinations_generate(self, prompt: str) -> Optional[str]:
         try:
-            import fal_client
-
-            def on_queue_update(update):
-                pass
-
-            result = fal_client.subscribe(
-                "fal-ai/flux/schnell",
-                arguments={"prompt": prompt, "image_size": "landscape_16_9", "num_images": 1},
-                with_logs=False,
-                on_queue_update=on_queue_update,
+            encoded = urllib.parse.quote(prompt[:400])
+            url = (
+                f"https://image.pollinations.ai/prompt/{encoded}"
+                "?width=1280&height=720&model=flux&nologo=true"
             )
-            images = result.get("images", [])
-            if images:
-                return images[0].get("url")
+            # Vérification que l'image est bien générée (HEAD ou GET partiel)
+            async with httpx.AsyncClient(timeout=45, follow_redirects=True) as client:
+                r = await client.get(url)
+                r.raise_for_status()
+            logger.info("pollinations_image_ok", size=len(r.content))
+            return url
         except Exception as e:
-            logger.error("fal_image_failed", error=str(e))
+            logger.error("pollinations_image_failed", error=str(e))
         return None
 
 

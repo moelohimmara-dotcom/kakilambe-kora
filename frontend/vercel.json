@@ -1,5 +1,8 @@
 {
   "buildCommand": "rm -rf .next && next build && cp .next/server/app/page_client-reference-manifest.js '.next/server/app/(editorial)/page_client-reference-manifest.js'",
   "framework": "nextjs",
-  "cleanUrls": true
+  "cleanUrls": true,
+  "env": {
+    "NEXT_PUBLIC_API_URL": "https://kora-backend-8wli.onrender.com"
+  }
 }

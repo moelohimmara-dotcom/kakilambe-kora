@@ -12,9 +12,10 @@ async def _save_db_update(db_id: str, image_url: str, wp_media_id: int):
         return
     try:
         from db.connection import get_db
+        from sqlalchemy import text
         async with get_db() as db:
             await db.execute(
-                "UPDATE articles SET image_url=:url, wp_media_id=:mid WHERE id=:id",
+                text("UPDATE articles SET image_url=:url, wp_media_id=:mid WHERE id=:id"),
                 {"url": image_url, "mid": wp_media_id, "id": db_id},
             )
     except Exception as e:

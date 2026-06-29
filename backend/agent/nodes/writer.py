@@ -147,9 +147,10 @@ async def _save_to_db(article: dict, cycle_id: str) -> str:
     """Persiste l'article en base avec status DRAFT."""
     try:
         from db.connection import get_db
+        from sqlalchemy import text
         async with get_db() as db:
             result = await db.execute(
-                """
+                text("""
                 INSERT INTO articles (
                     titre, chapeau, corps, meta_description, mots_cles,
                     categorie_id, source_url, source_nom, image_prompt,
@@ -159,7 +160,7 @@ async def _save_to_db(article: dict, cycle_id: str) -> str:
                     :categorie_id, :source_url, :source_nom, :image_prompt,
                     'DRAFT', 'AGENT_SEMI', :cycle_id
                 ) RETURNING id
-                """,
+                """),
                 {
                     "titre": article["titre"],
                     "chapeau": article["chapeau"],

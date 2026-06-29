@@ -14,15 +14,16 @@ async def _update_db(db_id: str, status: str, wp_url: str = ""):
         return
     try:
         from db.connection import get_db
+        from sqlalchemy import text
         async with get_db() as db:
             if status == "PUBLISHED" and wp_url:
                 await db.execute(
-                    "UPDATE articles SET status='PUBLISHED', wp_url=:url, published_at=now() WHERE id=:id",
+                    text("UPDATE articles SET status='PUBLISHED', wp_url=:url, published_at=now() WHERE id=:id"),
                     {"url": wp_url, "id": db_id},
                 )
             else:
                 await db.execute(
-                    "UPDATE articles SET status=:s WHERE id=:id",
+                    text("UPDATE articles SET status=:s WHERE id=:id"),
                     {"s": status, "id": db_id},
                 )
     except Exception as e:

@@ -68,14 +68,15 @@ async def _update_cycle_db(cycle_id: str, published_count: int, selected_count: 
     """Met à jour le cycle en base. Extracté pour faciliter les mocks."""
     try:
         from db.connection import get_db
+        from sqlalchemy import text
         async with get_db() as db:
             await db.execute(
-                """
+                text("""
                 UPDATE cycles
                 SET status='COMPLETED', completed_at=now(),
                     articles_published=:pub, articles_selected=:sel
                 WHERE id=:cid
-                """,
+                """),
                 {"pub": published_count, "sel": selected_count, "cid": cycle_id},
             )
     except Exception as e:
@@ -93,14 +94,15 @@ async def run(state: KoraState) -> KoraState:
     articles_rows = []
     try:
         from db.connection import get_db
+        from sqlalchemy import text
         async with get_db() as db:
             result = await db.execute(
-                """
+                text("""
                 SELECT titre, wp_url, source_nom, status
                 FROM articles
                 WHERE cycle_id = :cid AND status IN ('PUBLISHED','FAILED')
                 ORDER BY created_at
-                """,
+                """),
                 {"cid": state["cycle_id"]},
             )
             articles_rows = [dict(r) for r in result.mappings().all()]
