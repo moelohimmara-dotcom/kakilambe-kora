@@ -45,6 +45,7 @@ async def run(state: KoraState) -> KoraState:
         # 2. Upload WordPress Media
         from integrations.wordpress_client import wp_client
         titre_slug = article.get("titre", "kora-article")[:40].lower()
+        titre_slug = titre_slug.encode("ascii", "ignore").decode("ascii")
         titre_slug = "".join(c if c.isalnum() else "-" for c in titre_slug)
         wp_media_id = await wp_client.upload_media(image_url, f"{titre_slug}.jpg")
 
