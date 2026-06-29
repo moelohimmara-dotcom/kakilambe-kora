@@ -11,6 +11,7 @@ import asyncio
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import text
 from typing import Optional
 
 from core.logger import logger
@@ -261,7 +262,7 @@ async def reject_current_article(cycle_id: str):
                 from db.connection import get_db
                 async with get_db() as db:
                     await db.execute(
-                        "UPDATE articles SET status='REJECTED' WHERE id=:id",
+                        text("UPDATE articles SET status='REJECTED' WHERE id=:id"),
                         {"id": db_id},
                     )
             # Avance l'index pour passer à l'article suivant
@@ -303,7 +304,7 @@ async def _persist_cycle(cycle_id: str, mode: str):
         from db.connection import get_db
         async with get_db() as db:
             await db.execute(
-                "INSERT INTO cycles (id, mode, status) VALUES (:id, :mode, 'RUNNING')",
+                text("INSERT INTO cycles (id, mode, status) VALUES (:id, :mode, 'RUNNING')"),
                 {"id": cycle_id, "mode": mode},
             )
     except Exception as e:
@@ -315,7 +316,7 @@ async def _update_cycle_status(cycle_id: str, status: str):
         from db.connection import get_db
         async with get_db() as db:
             await db.execute(
-                "UPDATE cycles SET status=:s, completed_at=now() WHERE id=:id",
+                text("UPDATE cycles SET status=:s, completed_at=now() WHERE id=:id"),
                 {"s": status, "id": cycle_id},
             )
     except Exception as e:
@@ -327,7 +328,7 @@ async def _get_cycle_from_db(cycle_id: str) -> Optional[dict]:
         from db.connection import get_db
         async with get_db() as db:
             result = await db.execute(
-                "SELECT * FROM cycles WHERE id=:id", {"id": cycle_id}
+                text("SELECT * FROM cycles WHERE id=:id"), {"id": cycle_id}
             )
             row = result.mappings().first()
             return dict(row) if row else None

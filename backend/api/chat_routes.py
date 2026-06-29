@@ -3,6 +3,7 @@ import asyncio
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import text
 from typing import Optional, List
 
 from core.llm_router import llm_router
@@ -101,11 +102,11 @@ async def export_to_article(body: ChatRequest):
 
     async with get_db() as db:
         result = await db.execute(
-            """
+            text("""
             INSERT INTO articles (titre, corps, status, origin)
             VALUES (:titre, :corps, 'DRAFT', 'CHAT_EXPORT')
             RETURNING id
-            """,
+            """),
             {"titre": "Article depuis Chat KORA", "corps": content},
         )
         article_id = result.scalar()
@@ -117,7 +118,7 @@ async def export_to_article(body: ChatRequest):
 async def list_sessions():
     async with get_db() as db:
         result = await db.execute(
-            "SELECT id, title, created_at, message_count FROM chat_sessions ORDER BY created_at DESC LIMIT 50"
+            text("SELECT id, title, created_at, message_count FROM chat_sessions ORDER BY created_at DESC LIMIT 50")
         )
         rows = result.mappings().all()
     return [dict(r) for r in rows]
@@ -127,7 +128,7 @@ async def list_sessions():
 async def get_session_messages(session_id: str):
     async with get_db() as db:
         result = await db.execute(
-            "SELECT role, content, created_at FROM chat_messages WHERE session_id = :id ORDER BY created_at",
+            text("SELECT role, content, created_at FROM chat_messages WHERE session_id = :id ORDER BY created_at"),
             {"id": session_id},
         )
         rows = result.mappings().all()

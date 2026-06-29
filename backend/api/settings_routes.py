@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import text
 from typing import Optional
 
 from db.connection import get_db
@@ -32,7 +33,7 @@ class SourcePatch(BaseModel):
 @router.get("")
 async def get_settings():
     async with get_db() as db:
-        result = await db.execute("SELECT key, value FROM app_settings")
+        result = await db.execute(text("SELECT key, value FROM app_settings"))
         rows = result.mappings().all()
     return {r["key"]: r["value"] for r in rows}
 
@@ -45,8 +46,10 @@ async def update_settings(body: SettingsPatch):
     async with get_db() as db:
         for key, value in updates.items():
             await db.execute(
-                "INSERT INTO app_settings (key, value) VALUES (:k, :v) "
-                "ON CONFLICT (key) DO UPDATE SET value = :v, updated_at = now()",
+                text(
+                    "INSERT INTO app_settings (key, value) VALUES (:k, :v) "
+                    "ON CONFLICT (key) DO UPDATE SET value = :v, updated_at = now()"
+                ),
                 {"k": key, "v": str(value)},
             )
     return {"updated": list(updates.keys())}
@@ -58,7 +61,7 @@ async def update_settings(body: SettingsPatch):
 async def list_prompts():
     async with get_db() as db:
         result = await db.execute(
-            "SELECT id, name, content, is_default, is_builtin, temperature FROM system_prompts"
+            text("SELECT id, name, content, is_default, is_builtin, temperature FROM system_prompts")
         )
         rows = result.mappings().all()
     return [dict(r) for r in rows]
@@ -75,8 +78,10 @@ class PromptCreate(BaseModel):
 async def create_prompt(body: PromptCreate):
     async with get_db() as db:
         result = await db.execute(
-            "INSERT INTO system_prompts (name, content, temperature, is_default) "
-            "VALUES (:name, :content, :temp, :default) RETURNING id",
+            text(
+                "INSERT INTO system_prompts (name, content, temperature, is_default) "
+                "VALUES (:name, :content, :temp, :default) RETURNING id"
+            ),
             {"name": body.name, "content": body.content,
              "temp": body.temperature, "default": body.is_default},
         )
@@ -88,8 +93,10 @@ async def create_prompt(body: PromptCreate):
 async def update_prompt(prompt_id: str, body: PromptCreate):
     async with get_db() as db:
         await db.execute(
-            "UPDATE system_prompts SET name=:name, content=:content, "
-            "temperature=:temp, is_default=:default WHERE id=:id",
+            text(
+                "UPDATE system_prompts SET name=:name, content=:content, "
+                "temperature=:temp, is_default=:default WHERE id=:id"
+            ),
             {"name": body.name, "content": body.content,
              "temp": body.temperature, "default": body.is_default, "id": prompt_id},
         )
@@ -102,7 +109,7 @@ async def update_prompt(prompt_id: str, body: PromptCreate):
 async def list_sources():
     async with get_db() as db:
         result = await db.execute(
-            "SELECT id, name, url, category, is_active, last_synced, error_count FROM rss_sources ORDER BY name"
+            text("SELECT id, name, url, category, is_active, last_synced, error_count FROM rss_sources ORDER BY name")
         )
         rows = result.mappings().all()
     return [dict(r) for r in rows]
@@ -112,7 +119,7 @@ async def list_sources():
 async def create_source(body: SourceCreate):
     async with get_db() as db:
         result = await db.execute(
-            "INSERT INTO rss_sources (name, url, category) VALUES (:name, :url, :cat) RETURNING id",
+            text("INSERT INTO rss_sources (name, url, category) VALUES (:name, :url, :cat) RETURNING id"),
             {"name": body.name, "url": body.url, "cat": body.category},
         )
         source_id = result.scalar()
@@ -127,12 +134,12 @@ async def update_source(source_id: str, body: SourcePatch):
     set_clause = ", ".join(f"{k} = :{k}" for k in fields)
     fields["id"] = source_id
     async with get_db() as db:
-        await db.execute(f"UPDATE rss_sources SET {set_clause} WHERE id = :id", fields)
+        await db.execute(text(f"UPDATE rss_sources SET {set_clause} WHERE id = :id"), fields)
     return {"updated": True}
 
 
 @router.delete("/sources/{source_id}")
 async def delete_source(source_id: str):
     async with get_db() as db:
-        await db.execute("DELETE FROM rss_sources WHERE id = :id", {"id": source_id})
+        await db.execute(text("DELETE FROM rss_sources WHERE id = :id"), {"id": source_id})
     return {"deleted": True}
