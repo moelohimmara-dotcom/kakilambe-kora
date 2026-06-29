@@ -18,6 +18,7 @@ engine = create_async_engine(
     max_overflow=10,
     pool_pre_ping=True,
     echo=settings.DEBUG,
+    connect_args={"ssl": True},
 ) if _url else None
 
 AsyncSessionLocal = sessionmaker(
