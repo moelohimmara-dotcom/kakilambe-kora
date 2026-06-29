@@ -43,8 +43,19 @@ app.include_router(settings_router, prefix="/api/settings", tags=["settings"])
 async def health():
     return {"status": "ok", "service": "kora-api", "version": "1.0.0"}
 
+@app.get("/health/db", tags=["system"])
+async def health_db():
+    """Test database connectivity — returns real error if any."""
+    try:
+        from db.connection import get_db
+        async with get_db() as db:
+            await db.execute("SELECT 1")
+        return {"status": "ok", "db": "connected"}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     from core.logger import logger
     logger.error("unhandled_exception", path=str(request.url), error=str(exc))
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
