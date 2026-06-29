@@ -56,8 +56,13 @@ class WordPressClient:
             logger.info("wp_post_created", post_id=data["id"], link=data["link"])
             return data["link"]
 
-    async def upload_media(self, image_url: str, filename: str = "kora-image.jpg") -> Optional[int]:
-        async with httpx.AsyncClient(timeout=30) as client:
+    async def upload_media(
+        self,
+        image_url: str,
+        filename: str = "kora-image.jpg",
+        alt_text: str = "",
+    ) -> Optional[int]:
+        async with httpx.AsyncClient(timeout=45, follow_redirects=True) as client:
             img_response = await client.get(image_url)
             img_response.raise_for_status()
             image_bytes = img_response.content
@@ -74,8 +79,21 @@ class WordPressClient:
                 content=image_bytes,
             )
             r.raise_for_status()
-            data = r.json()
-            return data["id"]
+            media_id = r.json()["id"]
+
+        # Nettoyer caption/description (WordPress lit l'EXIF pollinations.ai sinon)
+        async with httpx.AsyncClient(timeout=15) as client:
+            await client.post(
+                f"{self.base_url}/wp-json/wp/v2/media/{media_id}",
+                headers=self._headers,
+                json={
+                    "alt_text": alt_text or filename.replace("-", " ").replace(".jpg", ""),
+                    "caption": "",
+                    "description": "",
+                },
+            )
+
+        return media_id
 
 
 wp_client = WordPressClient()

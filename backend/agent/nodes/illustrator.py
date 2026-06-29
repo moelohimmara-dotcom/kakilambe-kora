@@ -47,7 +47,12 @@ async def run(state: KoraState) -> KoraState:
         titre_slug = article.get("titre", "kora-article")[:40].lower()
         titre_slug = titre_slug.encode("ascii", "ignore").decode("ascii")
         titre_slug = "".join(c if c.isalnum() else "-" for c in titre_slug)
-        wp_media_id = await wp_client.upload_media(image_url, f"{titre_slug}.jpg")
+        titre_clean = article.get("titre", "")[:80]
+        wp_media_id = await wp_client.upload_media(
+            image_url,
+            f"{titre_slug}.jpg",
+            alt_text=titre_clean,
+        )
 
         # 3. Mise à jour en base
         await _save_db_update(db_id, image_url, wp_media_id)
