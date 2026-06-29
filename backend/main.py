@@ -45,17 +45,12 @@ async def health():
 
 @app.get("/health/db", tags=["system"])
 async def health_db():
-    """Test database connectivity — returns real error if any."""
+    """Test database connectivity."""
     try:
         from db.connection import get_db
+        from sqlalchemy import text
         async with get_db() as db:
-            await db.execute("SELECT 1")
+            await db.execute(text("SELECT 1"))
         return {"status": "ok", "db": "connected"}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
-
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    from core.logger import logger
-    logger.error("unhandled_exception", path=str(request.url), error=str(exc))
-    return JSONResponse(status_code=500, content={"detail": str(exc)})

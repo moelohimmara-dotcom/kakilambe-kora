@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from contextlib import asynccontextmanager
+import ssl
 
 from core.config import settings
 
@@ -11,6 +12,16 @@ if _url.startswith("postgresql://"):
 elif _url.startswith("postgres://"):
     _url = _url.replace("postgres://", "postgresql+asyncpg://", 1)
 
+# Strip sslmode param (psycopg2 syntax, not supported by asyncpg)
+if _url and "sslmode=" in _url:
+    import re
+    _url = re.sub(r"[?&]sslmode=[^&]*", "", _url).rstrip("?")
+
+# SSL context for Supabase (requires SSL)
+_ssl_ctx = ssl.create_default_context()
+_ssl_ctx.check_hostname = False
+_ssl_ctx.verify_mode = ssl.CERT_NONE
+
 # Lazy init — ne pas crasher si DATABASE_URL est vide au démarrage
 engine = create_async_engine(
     _url or "postgresql+asyncpg://localhost/placeholder",
@@ -18,6 +29,7 @@ engine = create_async_engine(
     max_overflow=10,
     pool_pre_ping=True,
     echo=settings.DEBUG,
+    connect_args={"ssl": _ssl_ctx},
 ) if _url else None
 
 AsyncSessionLocal = sessionmaker(
