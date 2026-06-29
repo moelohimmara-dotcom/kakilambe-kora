@@ -48,7 +48,7 @@ async def run(state: KoraState) -> KoraState:
         titre_slug = titre_slug.encode("ascii", "ignore").decode("ascii")
         titre_slug = "".join(c if c.isalnum() else "-" for c in titre_slug)
         titre_clean = article.get("titre", "")[:80]
-        wp_media_id = await wp_client.upload_media(
+        wp_media_id, wp_image_src = await wp_client.upload_media(
             image_url,
             f"{titre_slug}.jpg",
             alt_text=titre_clean,
@@ -62,10 +62,11 @@ async def run(state: KoraState) -> KoraState:
             cycle_id=state["cycle_id"],
             image_url=image_url,
             wp_media_id=wp_media_id,
+            wp_image_src=wp_image_src,
         )
 
-        # Mettre à jour l'article généré avec l'ID média
-        updated_article = {**article, "wp_media_id": wp_media_id}
+        # Mettre à jour l'article généré avec l'ID média et l'URL WP de l'image
+        updated_article = {**article, "wp_media_id": wp_media_id, "wp_image_src": wp_image_src or image_url}
         return {**state, "image_url": image_url, "wp_media_id": wp_media_id, "generated_article": updated_article}
 
     except Exception as e:

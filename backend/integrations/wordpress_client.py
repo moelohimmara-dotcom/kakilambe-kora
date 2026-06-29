@@ -31,9 +31,22 @@ class WordPressClient:
             return {"ok": True, "user": data.get("name"), "id": data.get("id")}
 
     async def publish_post(self, article: dict) -> str:
+        # Injecter l'image en tête du corps pour garantir son affichage
+        # indépendamment du support featured_image par le thème
+        corps = article.get("corps", "")
+        wp_image_src = article.get("wp_image_src", "")
+        titre = article.get("titre", "")
+        if wp_image_src:
+            img_html = (
+                f'<figure class="wp-block-image size-large aligncenter">'
+                f'<img src="{wp_image_src}" alt="{titre}" class="kora-featured-image" />'
+                f'</figure>\n\n'
+            )
+            corps = img_html + corps
+
         payload = {
-            "title": article.get("titre", ""),
-            "content": article.get("corps", ""),
+            "title": titre,
+            "content": corps,
             "excerpt": article.get("chapeau", ""),
             "status": "publish",
             "meta": {
@@ -82,8 +95,10 @@ class WordPressClient:
             media_id = r.json()["id"]
 
         # Nettoyer caption/description (WordPress lit l'EXIF pollinations.ai sinon)
+        # et récupérer l'URL hébergée sur WordPress
+        wp_image_url = None
         async with httpx.AsyncClient(timeout=15) as client:
-            await client.post(
+            patch = await client.post(
                 f"{self.base_url}/wp-json/wp/v2/media/{media_id}",
                 headers=self._headers,
                 json={
@@ -92,8 +107,10 @@ class WordPressClient:
                     "description": "",
                 },
             )
+            if patch.status_code < 400:
+                wp_image_url = patch.json().get("source_url", "")
 
-        return media_id
+        return media_id, wp_image_url
 
 
 wp_client = WordPressClient()
