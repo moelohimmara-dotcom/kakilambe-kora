@@ -103,12 +103,7 @@ async def health_provider(provider: str):
 async def health_tavily():
     if not settings.TAVILY_API_KEY:
         return {"status": "error", "detail": "TAVILY_API_KEY not configured"}
-    try:
-        from tavily import TavilyClient
-        TavilyClient(api_key=settings.TAVILY_API_KEY)
-        return {"status": "ok", "detail": "Tavily key present"}
-    except Exception as e:
-        return {"status": "error", "detail": str(e)}
+    return {"status": "ok", "detail": "Tavily key present"}
 
 @app.get("/health/fal", tags=["system"])
 async def health_fal():
