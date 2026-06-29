@@ -1,0 +1,15 @@
+.env
+.env.local
+.env.local-test
+.env.production
+.env.*.local
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+dist/
+build/
+*.egg-info/
+.DS_Store

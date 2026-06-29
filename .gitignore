@@ -1,0 +1,42 @@
+# ── Secrets — NE JAMAIS committer ─────────────────────────────────────────────
+.env
+.env.local
+.env.local-test
+.env.production
+.env.*.local
+*.pem
+
+# ── Python ─────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+backend/.venv/
+backend/.venv-ci/
+backend/venv/
+backend/env/
+backend/.pytest_cache/
+backend/dist/
+backend/build/
+backend/*.egg-info/
+
+# ── Node / Next.js ─────────────────────────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+guineepress-intelligence/node_modules/
+frontend/.next/
+guineepress-intelligence/.next/
+frontend/out/
+.vercel
+
+# ── OS ─────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.log
+
+# ── IDE ────────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/settings.json
+
+# ── Claude Code session ────────────────────────────────────────────────────────
+.claude/
+guineepress-intelligence/

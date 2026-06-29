@@ -1,0 +1,102 @@
+// Types TypeScript partagés KORA
+
+export type ArticleStatus = 'DRAFT' | 'PENDING_REVIEW' | 'PUBLISHED' | 'REJECTED' | 'FAILED'
+export type ArticleOrigin = 'AGENT_AUTO' | 'AGENT_SEMI' | 'CHAT_EXPORT'
+export type ProviderStatus = 'ACTIVE' | 'RATE_LIMITED' | 'EXHAUSTED' | 'OFFLINE'
+export type CycleStatus = 'RUNNING' | 'COMPLETED' | 'FAILED' | 'PAUSED'
+export type CycleMode = 'auto' | 'semi'
+export type MessageRole = 'user' | 'assistant' | 'system'
+export type BadgeVariant = 'orange' | 'sage' | 'blue' | 'gray' | 'danger' | 'warning'
+
+export interface Article {
+  id: string
+  titre: string
+  chapeau?: string
+  corps?: string
+  meta_description?: string
+  mots_cles?: string[]
+  categorie_id?: number
+  source_url?: string
+  source_nom?: string
+  image_url?: string
+  wp_url?: string
+  status: ArticleStatus
+  origin: ArticleOrigin
+  llm_provider_used?: string
+  word_count?: number
+  cycle_id?: string
+  created_at: string
+  published_at?: string
+}
+
+export interface Provider {
+  name: string
+  model: string
+  status: ProviderStatus
+  tokens_used_today: number
+  daily_token_limit: number | null
+  usage_pct: number | null
+  requests_today: number
+  rate_limited_until?: string
+}
+
+export interface Cycle {
+  id: string
+  mode: CycleMode
+  status: CycleStatus
+  articles_collected: number
+  articles_selected: number
+  articles_published: number
+  articles_rejected: number
+  started_at: string
+  completed_at?: string
+}
+
+export interface ChatMessage {
+  role: MessageRole
+  content: string
+  created_at?: string
+}
+
+export interface ChatSession {
+  id: string
+  title?: string
+  message_count: number
+  created_at: string
+}
+
+export interface RSSSource {
+  id: string
+  name: string
+  url: string
+  category?: string
+  is_active: boolean
+  last_synced?: string
+  error_count: number
+}
+
+export interface SystemPrompt {
+  id: string
+  name: string
+  content: string
+  is_default: boolean
+  is_builtin: boolean
+  temperature: number
+}
+
+export interface KpiData {
+  pending_count: number
+  published_week: number
+  next_cycle_hour: string
+}
+
+export interface AppSettings {
+  wp_url?: string
+  wp_username?: string
+  wp_app_password?: string
+  auto_publish_enabled?: boolean
+  daily_article_limit?: number
+  publication_delay_hours?: number
+  report_email?: string
+  admin_email?: string
+}
