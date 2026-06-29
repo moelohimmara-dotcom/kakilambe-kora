@@ -104,13 +104,11 @@ async def health_tavily():
     if not settings.TAVILY_API_KEY:
         return {"status": "error", "detail": "TAVILY_API_KEY not configured"}
     try:
-        from tavily import TavilyClient as _Tavily
-        client = _Tavily(api_key=settings.TAVILY_API_KEY)
-        result = client.search("Guinée Conakry actualité", max_results=2, search_depth="basic")
-        count = len(result.get("results", []))
-        return {"status": "ok", "detail": f"Tavily live: {count} results"}
+        from integrations.tavily_client import tavily_client
+        results = await tavily_client.search("Guinée Conakry actualité", max_results=2)
+        return {"status": "ok", "detail": f"Tavily live: {len(results)} results"}
     except Exception as e:
-        return {"status": "error", "detail": f"Tavily import/call failed: {e}"}
+        return {"status": "error", "detail": f"Tavily failed: {e}"}
 
 @app.get("/health/fal", tags=["system"])
 async def health_fal():

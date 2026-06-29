@@ -1,6 +1,9 @@
 from typing import List, Optional
+import httpx
 from core.config import settings
 from core.logger import logger
+
+_TAVILY_API_URL = "https://api.tavily.com/search"
 
 
 class TavilyClient:
@@ -8,11 +11,24 @@ class TavilyClient:
         self.api_key = settings.TAVILY_API_KEY
 
     async def search(self, query: str, max_results: int = 10) -> List[dict]:
+        """Appel direct à l'API Tavily via httpx — évite la dépendance cohere du SDK."""
+        if not self.api_key:
+            logger.error("tavily_no_api_key")
+            return []
         try:
-            from tavily import TavilyClient as _Tavily
-            client = _Tavily(api_key=self.api_key)
-            result = client.search(query, max_results=max_results, search_depth="advanced")
-            return result.get("results", [])
+            async with httpx.AsyncClient(timeout=20) as client:
+                r = await client.post(
+                    _TAVILY_API_URL,
+                    json={
+                        "api_key": self.api_key,
+                        "query": query,
+                        "max_results": max_results,
+                        "search_depth": "advanced",
+                        "include_raw_content": False,
+                    },
+                )
+                r.raise_for_status()
+                return r.json().get("results", [])
         except Exception as e:
             logger.error("tavily_search_failed", query=query, error=str(e))
             return []
