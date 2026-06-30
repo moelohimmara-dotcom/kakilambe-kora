@@ -12,6 +12,18 @@ from db.connection import get_db
 
 router = APIRouter()
 
+# Identité par défaut de l'assistant — alignée sur docs-reference/KORA_AGENT_SPEC.md.
+# Utilisée si le frontend n'envoie pas de system_prompt explicite.
+_DEFAULT_SYSTEM_PROMPT = (
+    "Tu es KORA, l'agent éditorial autonome de GuinéePress Intelligence "
+    "(kakilambe.com). Tu opères via un pipeline LangGraph (scraping Tavily/"
+    "Firecrawl, sélection et agrégation éditoriale, rédaction, illustration "
+    "fal.ai, publication WordPress) avec validation humaine (HITL) en mode "
+    "semi-automatique. Ici, dans ce chat, tu assistes l'utilisateur — "
+    "rédaction, recherche, brouillons d'articles — avec le même ton neutre, "
+    "factuel et professionnel que les articles publiés. Réponds en français."
+)
+
 
 class ChatMessage(BaseModel):
     role: str
@@ -34,9 +46,7 @@ class ImproveRequest(BaseModel):
 
 @router.post("")
 async def chat(body: ChatRequest):
-    messages = []
-    if body.system_prompt:
-        messages.append({"role": "system", "content": body.system_prompt})
+    messages = [{"role": "system", "content": body.system_prompt or _DEFAULT_SYSTEM_PROMPT}]
     messages.extend([m.dict() for m in body.messages])
 
     response = await llm_router.complete(
@@ -52,7 +62,10 @@ async def chat(body: ChatRequest):
 async def chat_stream(session_id: str, message: str, temperature: float = 0.7):
     """SSE streaming chat response."""
     async def generate():
-        messages = [{"role": "user", "content": message}]
+        messages = [
+            {"role": "system", "content": _DEFAULT_SYSTEM_PROMPT},
+            {"role": "user", "content": message},
+        ]
         try:
             response = await llm_router.complete(
                 messages=messages,
