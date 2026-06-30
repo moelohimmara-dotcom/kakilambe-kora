@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     API_SECRET_KEY: str = ""
     ADMIN_SECRET_KEY: str = ""
     ADMIN_EMAIL: str = "mistermarcket@gmail.com"
+    GMAIL_USER: str = ""
+    GMAIL_APP_PASSWORD: str = ""
+    GMAIL_RECIPIENT: str = "mistermarcket@gmail.com"
 
     class Config:
         env_file = ".env"
