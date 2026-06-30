@@ -62,15 +62,7 @@ class KoraLLMRouter:
 
     # ── Provider state ──────────────────────────────────────────────────────
 
-    def get_provider_state(self, provider: str) -> dict:
-        try:
-            if self.redis is None:
-                return {}
-            data = self.redis.get(f"provider:{provider}")
-            if data:
-                return json.loads(data)
-        except Exception:
-            pass
+    def _default_state(self) -> dict:
         return {
             "status": "ACTIVE",
             "tokens_used_today": 0,
@@ -78,6 +70,17 @@ class KoraLLMRouter:
             "rate_limited_until": None,
             "exhausted_until": None,
         }
+
+    def get_provider_state(self, provider: str) -> dict:
+        if self.redis is None:
+            return self._default_state()
+        try:
+            data = self.redis.get(f"provider:{provider}")
+            if data:
+                return json.loads(data)
+        except Exception:
+            pass
+        return self._default_state()
 
     def set_provider_state(self, provider: str, state: dict):
         if self.redis is None:
