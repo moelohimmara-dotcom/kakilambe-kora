@@ -143,3 +143,28 @@ async def delete_source(source_id: str):
     async with get_db() as db:
         await db.execute(text("DELETE FROM rss_sources WHERE id = :id"), {"id": source_id})
     return {"deleted": True}
+
+
+# ── Test email ────────────────────────────────────────────────────────────────
+
+@router.post("/test-email")
+async def test_email():
+    from integrations.gmail_client import gmail_client
+    from datetime import datetime
+    import pytz
+    from core.config import settings
+
+    now = datetime.now(pytz.timezone(settings.CYCLE_TIMEZONE)).strftime("%d/%m/%Y %H:%M")
+    await gmail_client.send_report(
+        subject=f"[KORA] Test de notification — {now}",
+        body_html=f"""
+        <div style="font-family:sans-serif;max-width:500px;margin:auto;padding:24px">
+          <div style="font-size:22px;font-weight:700;margin-bottom:12px">
+            <span style="color:#f97316">/</span>KORA — Test email ✅
+          </div>
+          <p>Les notifications Gmail sont correctement configurées.</p>
+          <p style="color:#6b7280;font-size:13px">Envoyé le {now} (Conakry)</p>
+        </div>
+        """,
+    )
+    return {"sent": True, "to": settings.GMAIL_RECIPIENT}
