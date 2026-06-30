@@ -154,17 +154,48 @@ async def test_email():
     import pytz
     from core.config import settings
 
+    resend_key = getattr(settings, "RESEND_API_KEY", "")
+    smtp_user = getattr(settings, "GMAIL_USER", "")
+    smtp_pw = getattr(settings, "GMAIL_APP_PASSWORD", "")
+    if not resend_key and not (smtp_user and smtp_pw):
+        raise HTTPException(status_code=503, detail="Aucune configuration email trouvée (RESEND_API_KEY ou GMAIL_USER+GMAIL_APP_PASSWORD requis)")
+
+    last_error: list[str] = []
+    original_send = gmail_client._send_via_resend if resend_key else gmail_client._send_via_smtp
+
+    async def patched_resend(api_key, subject, body_html, recipient):
+        from core.logger import logger as _log
+        import httpx as _httpx
+        sender = getattr(settings, "RESEND_FROM", "KORA GuinéePress <onboarding@resend.dev>")
+        try:
+            async with _httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    "https://api.resend.com/emails",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={"from": sender, "to": [recipient], "subject": subject, "html": body_html},
+                )
+                resp.raise_for_status()
+            _log.info("email_sent", provider="resend", to=recipient, subject=subject)
+        except Exception as e:
+            last_error.append(str(e))
+            raise
+
     now = datetime.now(pytz.timezone(settings.CYCLE_TIMEZONE)).strftime("%d/%m/%Y %H:%M")
-    await gmail_client.send_report(
-        subject=f"[KORA] Test de notification — {now}",
-        body_html=f"""
-        <div style="font-family:sans-serif;max-width:500px;margin:auto;padding:24px">
-          <div style="font-size:22px;font-weight:700;margin-bottom:12px">
-            <span style="color:#f97316">/</span>KORA — Test email ✅
-          </div>
-          <p>Les notifications Gmail sont correctement configurées.</p>
-          <p style="color:#6b7280;font-size:13px">Envoyé le {now} (Conakry)</p>
-        </div>
-        """,
-    )
-    return {"sent": True, "to": settings.GMAIL_RECIPIENT}
+    body = f"""
+    <div style="font-family:sans-serif;max-width:500px;margin:auto;padding:24px">
+      <div style="font-size:22px;font-weight:700;margin-bottom:12px">
+        <span style="color:#f97316">/</span>KORA — Test email ✅
+      </div>
+      <p>Les notifications email sont correctement configurées.</p>
+      <p style="color:#6b7280;font-size:13px">Envoyé le {now} (Conakry)</p>
+    </div>
+    """
+    try:
+        await gmail_client.send_report(subject=f"[KORA] Test de notification — {now}", body_html=body)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Échec envoi email : {e}")
+
+    if last_error:
+        raise HTTPException(status_code=500, detail=f"Échec envoi email : {last_error[0]}")
+
+    return {"sent": True, "to": settings.GMAIL_RECIPIENT, "provider": "resend" if resend_key else "smtp"}

@@ -47,7 +47,9 @@ class Settings(BaseSettings):
     WP_USERNAME: str = "kora_publisher"
     WP_APP_PASSWORD: str = ""
 
-    # ── Gmail ────────────────────────────────────────────────────────────────
+    # ── Email (Resend preferred, SMTP fallback) ───────────────────────────────
+    RESEND_API_KEY: str = ""
+    RESEND_FROM: str = "KORA GuinéePress <onboarding@resend.dev>"
     GMAIL_CLIENT_ID: str = ""
     GMAIL_CLIENT_SECRET: str = ""
     GMAIL_REFRESH_TOKEN: str = ""
