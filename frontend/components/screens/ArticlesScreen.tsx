@@ -29,7 +29,7 @@ export function ArticlesScreen() {
     () => articleApi.list(activeStatus || undefined),
     [activeStatus]
   )
-  const { data, loading, refetch } = useAsync(fetchArticles)
+  const { data, loading, refetch } = useAsync(fetchArticles, [activeStatus])
   const articles = (data as { items: Article[] } | null)?.items ?? []
 
   const { mutate: approve, loading: approving } = useMutation(async (id: string) => {
@@ -233,7 +233,7 @@ function EmptyState({ status }: { status: ArticleStatus | '' }) {
         {status ? `Aucun article "${statusLabel(status as ArticleStatus)}"` : 'Aucun article'}
       </p>
       <p className="font-heading text-[13px] text-gray-dk">
-        Les articles générés par KORA apparaîtront ici.
+        🤖 KORA travaille, revenez bientôt.
       </p>
     </div>
   )
