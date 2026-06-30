@@ -79,10 +79,19 @@ async def run_cycle(body: RunRequest):
 
             if body.mode == "semi":
                 _cycles[cycle_id]["status"] = "PAUSED"
-                _emit_log(cycle_id, "HITL", "En attente de validation humaine")
+                _emit_log(cycle_id, "HITL", "Article prêt — en attente de validation humaine")
+                await _update_cycle_status(cycle_id, "PAUSED")
             else:
                 _cycles[cycle_id]["status"] = "COMPLETED"
-                _emit_log(cycle_id, "OK", "Cycle complété")
+                _emit_log(cycle_id, "OK", "Cycle autonome complété")
+                await _update_cycle_status(cycle_id, "COMPLETED")
+                # Ferme la queue SSE proprement
+                q = _log_queues.get(cycle_id)
+                if q:
+                    try:
+                        q.put_nowait(_SENTINEL)
+                    except asyncio.QueueFull:
+                        pass
 
             if result:
                 _cycles[cycle_id]["published_count"] = result.get("published_count", 0)
@@ -214,12 +223,20 @@ async def resume_cycle(cycle_id: str):
                 idx = result.get("article_index", 0)
                 selected = result.get("selected_articles", [])
                 if idx < len(selected):
-                    _cycles[cycle_id]["status"] = "PAUSED"
+                    new_status = "PAUSED"
+                    _cycles[cycle_id]["status"] = new_status
                     _emit_log(cycle_id, "HITL", f"Article suivant en attente ({idx+1}/{len(selected)})")
                 else:
-                    _cycles[cycle_id]["status"] = "COMPLETED"
+                    new_status = "COMPLETED"
+                    _cycles[cycle_id]["status"] = new_status
                     _cycles[cycle_id]["published_count"] = result.get("published_count", 0)
                     _emit_log(cycle_id, "OK", "Tous les articles traités")
+                    q = _log_queues.get(cycle_id)
+                    if q:
+                        try:
+                            q.put_nowait(_SENTINEL)
+                        except asyncio.QueueFull:
+                            pass
 
             await _update_cycle_status(cycle_id, _cycles[cycle_id]["status"])
 

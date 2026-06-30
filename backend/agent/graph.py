@@ -33,14 +33,12 @@ def _route_after_select(state: KoraState) -> str:
 def _route_after_image(state: KoraState) -> str:
     """
     Après génération image :
-    - mode semi + article prêt → interrupt (publish est configuré comme interrupt_before)
-    - mode auto → publish directement
-    - pas d'article → next_or_report
+    - article présent → publish_wordpress
+      (en mode semi, LangGraph s'interrompt AVANT ce nœud via interrupt_before)
+    - pas d'article (erreur illustrateur) → next_or_report
     """
     if not state.get("generated_article"):
         return "next_or_report"
-    if state.get("mode") == "semi":
-        return "publish_wordpress"   # le graph s'interrompt avant ce nœud (interrupt_before)
     return "publish_wordpress"
 
 
