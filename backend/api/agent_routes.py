@@ -263,10 +263,10 @@ async def reject_current_article(cycle_id: str):
         raise HTTPException(status_code=400, detail="Cycle non en pause")
 
     config = {"configurable": {"thread_id": cycle_id}}
-    from agent.graph import kora_graph
+    from agent.graph import kora_graph_semi
 
     try:
-        snapshot = await kora_graph.aget_state(config)
+        snapshot = await kora_graph_semi.aget_state(config)
         if snapshot and snapshot.values:
             article = snapshot.values.get("generated_article")
             db_id = (article or {}).get("db_id", "")
@@ -279,7 +279,7 @@ async def reject_current_article(cycle_id: str):
                     )
             # Avance l'index pour passer à l'article suivant
             idx = snapshot.values.get("article_index", 0)
-            await kora_graph.aupdate_state(
+            await kora_graph_semi.aupdate_state(
                 config,
                 {"article_index": idx + 1, "generated_article": None, "hitl_approved": False},
                 as_node="generate_image",

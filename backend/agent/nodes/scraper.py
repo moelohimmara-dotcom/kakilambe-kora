@@ -10,12 +10,29 @@ from agent.state import KoraState
 from core.logger import logger
 
 
-# Sources d'actualité guinéenne / africaine à surveiller
-_NEWS_QUERIES = [
+# Requêtes de secours si aucune source RSS n'est configurée en base
+_FALLBACK_QUERIES = [
     "actualité Guinée Conakry aujourd'hui",
     "Guinea Conakry news today",
     "Afrique de l'Ouest dernières nouvelles",
 ]
+
+
+async def _load_sources_from_db() -> list[str]:
+    """Charge les URLs RSS actives depuis la table rss_sources."""
+    try:
+        from db.connection import get_db
+        from sqlalchemy import text
+        async with get_db() as db:
+            result = await db.execute(
+                text("SELECT url FROM rss_sources WHERE is_active = true ORDER BY name")
+            )
+            rows = result.mappings().all()
+        urls = [r["url"] for r in rows if r["url"]]
+        return urls
+    except Exception as e:
+        logger.warning("scraper_db_sources_failed", error=str(e))
+        return []
 
 _MAX_ARTICLES = 8      # réduit pour free tier (mémoire 512MB)
 _SCRAPE_TIMEOUT = 15   # secondes par URL
@@ -48,8 +65,25 @@ async def run(state: KoraState) -> KoraState:
 
     all_results: List[dict] = []
 
-    # 1. Recherche Tavily pour chaque requête (niveau 1 : sources directes)
-    for query in _NEWS_QUERIES:
+    # 1a. Sources RSS depuis la DB (si configurées)
+    db_sources = await _load_sources_from_db()
+    if db_sources:
+        logger.info("scraper_using_db_sources", count=len(db_sources))
+        for url in db_sources:
+            try:
+                results = await tavily_client.search(
+                    f"site:{url.split('/')[2]} actualité Guinée",
+                    max_results=4,
+                )
+                all_results.extend(results)
+            except Exception as e:
+                logger.warning("tavily_source_failed", url=url, error=str(e))
+    else:
+        logger.info("scraper_using_fallback_queries")
+
+    # 1b. Requêtes de secours (toujours exécutées pour compléter le volume)
+    queries = _FALLBACK_QUERIES if not db_sources else _FALLBACK_QUERIES[:1]
+    for query in queries:
         try:
             results = await tavily_client.search(query, max_results=5)
             all_results.extend(results)

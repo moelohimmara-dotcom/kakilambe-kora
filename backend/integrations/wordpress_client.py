@@ -8,40 +8,59 @@ from core.logger import logger
 
 class WordPressClient:
     def __init__(self):
-        self.base_url = settings.WP_BASE_URL.rstrip("/")
-        self._auth = base64.b64encode(
-            f"{settings.WP_USERNAME}:{settings.WP_APP_PASSWORD}".encode()
-        ).decode()
+        self._base_url_env = settings.WP_BASE_URL.rstrip("/")
+        self._username_env = settings.WP_USERNAME
+        self._password_env = settings.WP_APP_PASSWORD
+
+    async def _get_credentials(self) -> tuple[str, str]:
+        """
+        Priorité : settings DB (modifiables depuis l'UI) → variables d'environnement.
+        """
+        try:
+            from db.connection import get_db
+            from sqlalchemy import text
+            async with get_db() as db:
+                result = await db.execute(
+                    text("SELECT key, value FROM app_settings WHERE key IN ('wp_url','wp_username','wp_app_password')")
+                )
+                rows = {r["key"]: r["value"] for r in result.mappings().all()}
+            base_url = (rows.get("wp_url") or self._base_url_env).rstrip("/")
+            username = rows.get("wp_username") or self._username_env
+            password = rows.get("wp_app_password") or self._password_env
+            return base_url, base64.b64encode(f"{username}:{password}".encode()).decode()
+        except Exception:
+            base_url = self._base_url_env
+            auth = base64.b64encode(f"{self._username_env}:{self._password_env}".encode()).decode()
+            return base_url, auth
 
     @property
-    def _headers(self) -> dict:
-        return {
-            "Authorization": f"Basic {self._auth}",
-            "Content-Type": "application/json",
-        }
+    def _headers_sync(self) -> dict:
+        auth = base64.b64encode(f"{self._username_env}:{self._password_env}".encode()).decode()
+        return {"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
+
+    async def _headers(self) -> dict:
+        _, auth = await self._get_credentials()
+        return {"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
 
     async def test_connection(self) -> dict:
+        base_url, auth = await self._get_credentials()
+        headers = {"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(
-                f"{self.base_url}/wp-json/wp/v2/users/me",
-                headers=self._headers,
-            )
+            r = await client.get(f"{base_url}/wp-json/wp/v2/users/me", headers=headers)
             r.raise_for_status()
             data = r.json()
             return {"ok": True, "user": data.get("name"), "id": data.get("id")}
 
     async def publish_post(self, article: dict) -> str:
-        corps = article.get("corps", "")
-        titre = article.get("titre", "")
+        base_url, auth = await self._get_credentials()
+        headers = {"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
 
         payload = {
-            "title": titre,
-            "content": corps,
+            "title":   article.get("titre", ""),
+            "content": article.get("corps", ""),
             "excerpt": article.get("chapeau", ""),
-            "status": "publish",
-            "meta": {
-                "_yoast_wpseo_metadesc": article.get("meta_description", ""),
-            },
+            "status":  "publish",
+            "meta": {"_yoast_wpseo_metadesc": article.get("meta_description", "")},
         }
         if article.get("categorie_id"):
             payload["categories"] = [article["categorie_id"]]
@@ -49,11 +68,7 @@ class WordPressClient:
             payload["featured_media"] = article["wp_media_id"]
 
         async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.post(
-                f"{self.base_url}/wp-json/wp/v2/posts",
-                headers=self._headers,
-                json=payload,
-            )
+            r = await client.post(f"{base_url}/wp-json/wp/v2/posts", headers=headers, json=payload)
             r.raise_for_status()
             data = r.json()
             logger.info("wp_post_created", post_id=data["id"], link=data["link"])
@@ -64,36 +79,38 @@ class WordPressClient:
         image_url: str,
         filename: str = "kora-image.jpg",
         alt_text: str = "",
-    ) -> Optional[int]:
+    ) -> tuple[int, Optional[str]]:
+        base_url, auth = await self._get_credentials()
+
         async with httpx.AsyncClient(timeout=45, follow_redirects=True) as client:
             img_response = await client.get(image_url)
             img_response.raise_for_status()
             image_bytes = img_response.content
 
-        headers = {
-            "Authorization": f"Basic {self._auth}",
+        upload_headers = {
+            "Authorization": f"Basic {auth}",
             "Content-Disposition": f'attachment; filename="{filename}"',
             "Content-Type": "image/jpeg",
         }
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.post(
-                f"{self.base_url}/wp-json/wp/v2/media",
-                headers=headers,
+                f"{base_url}/wp-json/wp/v2/media",
+                headers=upload_headers,
                 content=image_bytes,
             )
             r.raise_for_status()
             media_id = r.json()["id"]
 
-        # Nettoyer caption/description (WordPress lit l'EXIF pollinations.ai sinon)
-        # et récupérer l'URL hébergée sur WordPress
+        # Nettoyer alt/caption et récupérer l'URL hébergée sur WordPress
+        json_headers = {"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
         wp_image_url = None
         async with httpx.AsyncClient(timeout=15) as client:
             patch = await client.post(
-                f"{self.base_url}/wp-json/wp/v2/media/{media_id}",
-                headers=self._headers,
+                f"{base_url}/wp-json/wp/v2/media/{media_id}",
+                headers=json_headers,
                 json={
-                    "alt_text": alt_text or filename.replace("-", " ").replace(".jpg", ""),
-                    "caption": "",
+                    "alt_text":    alt_text or filename.replace("-", " ").replace(".jpg", ""),
+                    "caption":     "",
                     "description": "",
                 },
             )

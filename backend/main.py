@@ -19,6 +19,7 @@ from api.agent_routes import router as agent_router
 from api.auth_routes import router as auth_router
 from api.chat_routes import router as chat_router
 from api.article_routes import router as article_router
+from api.cycle_routes import router as cycle_router
 from api.provider_routes import router as provider_router
 from api.settings_routes import router as settings_router
 
@@ -60,12 +61,42 @@ app.include_router(auth_router,     prefix="/api/auth",     tags=["auth"])
 app.include_router(agent_router,    prefix="/api/agent",    tags=["agent"])
 app.include_router(chat_router,     prefix="/api/chat",     tags=["chat"])
 app.include_router(article_router,  prefix="/api/articles", tags=["articles"])
+app.include_router(cycle_router,    prefix="/api/cycles",   tags=["cycles"])
 app.include_router(provider_router, prefix="/api/providers",tags=["providers"])
 app.include_router(settings_router, prefix="/api/settings", tags=["settings"])
 
 @app.get("/health", tags=["system"])
 async def health():
-    return {"status": "ok", "service": "kora-api", "version": "1.0.0"}
+    """
+    Health check agrégé — le frontend attend {"status", "services": {db, wordpress, ...}}.
+    """
+    services: dict = {}
+
+    # DB
+    try:
+        from db.connection import get_db
+        from sqlalchemy import text as _text
+        async with get_db() as _db:
+            await _db.execute(_text("SELECT 1"))
+        services["db"] = "ok"
+    except Exception:
+        services["db"] = "error"
+
+    # WordPress
+    try:
+        import httpx as _httpx, base64 as _b64
+        _tok = _b64.b64encode(f"{settings.WP_USERNAME}:{settings.WP_APP_PASSWORD}".encode()).decode()
+        async with _httpx.AsyncClient(timeout=5) as _c:
+            _r = await _c.get(
+                f"{settings.WP_BASE_URL}/wp-json/wp/v2/posts?per_page=1",
+                headers={"Authorization": f"Basic {_tok}"},
+            )
+        services["wordpress"] = "ok" if _r.status_code < 400 else "error"
+    except Exception:
+        services["wordpress"] = "error"
+
+    overall = "ok" if all(v == "ok" for v in services.values()) else "degraded"
+    return {"status": overall, "service": "kora-api", "version": "1.0.0", "services": services}
 
 @app.get("/health/db", tags=["system"])
 async def health_db():
