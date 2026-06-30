@@ -236,7 +236,7 @@ export function AgentScreen() {
             Effacer
           </button>
         </div>
-        <div className="terminal h-72 overflow-y-auto" aria-label="Logs KORA" aria-live="polite">
+        <div className="terminal h-72 overflow-y-auto" role="log" aria-label="Logs KORA" aria-live="off">
           {logs.length === 0 ? (
             <p className="log-ts">// En attente des logs…</p>
           ) : (

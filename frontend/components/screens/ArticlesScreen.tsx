@@ -64,12 +64,14 @@ export function ArticlesScreen() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 mb-6 bg-gray-pale rounded-lg p-1 w-fit flex-wrap" role="tablist">
+      <div className="flex gap-1 mb-6 bg-gray-pale rounded-lg p-1 w-fit flex-wrap" role="tablist" aria-label="Filtrer les articles">
         {STATUS_TABS.map(tab => (
           <button
             key={tab.value}
+            id={`tab-${tab.value || 'all'}`}
             role="tab"
             aria-selected={activeStatus === tab.value}
+            aria-controls="articles-panel"
             onClick={() => setActiveStatus(tab.value)}
             className={
               `px-4 py-1.5 rounded-md font-heading text-[12px] font-semibold transition-all ` +
@@ -86,6 +88,7 @@ export function ArticlesScreen() {
       </div>
 
       {/* Articles list */}
+      <div id="articles-panel" role="tabpanel" aria-labelledby={`tab-${activeStatus || 'all'}`}>
       {loading ? (
         <div className="flex justify-center py-16"><Spinner size="lg" /></div>
       ) : articles.length === 0 ? (
@@ -107,6 +110,7 @@ export function ArticlesScreen() {
           ))}
         </div>
       )}
+      </div>
     </div>
   )
 }

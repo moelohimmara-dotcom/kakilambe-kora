@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useSidebar } from '@/lib/contexts/SidebarContext'
 import { Badge } from '@/components/ui/Badge'
 
@@ -19,16 +19,37 @@ const navItems = [
 export function MobileSidebar() {
   const { mobileOpen, closeMobile } = useSidebar()
   const pathname = usePathname()
+  const drawerRef = useRef<HTMLElement>(null)
 
   // Ferme au changement de page
   useEffect(() => { closeMobile() }, [pathname, closeMobile])
 
-  // Trap focus / ESC
+  // Focus trap + ESC
   useEffect(() => {
     if (!mobileOpen) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeMobile() }
-    document.addEventListener('keydown', onKey)
     document.body.style.overflow = 'hidden'
+
+    // Déplace le focus vers le premier élément focusable du drawer
+    const focusable = drawerRef.current?.querySelectorAll<HTMLElement>(
+      'a, button, input, [tabindex]:not([tabindex="-1"])'
+    )
+    focusable?.[0]?.focus()
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { closeMobile(); return }
+      if (e.key !== 'Tab' || !drawerRef.current) return
+      const els = Array.from(drawerRef.current.querySelectorAll<HTMLElement>(
+        'a, button, input, [tabindex]:not([tabindex="-1"])'
+      ))
+      if (els.length === 0) return
+      const first = els[0], last = els[els.length - 1]
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault(); last.focus()
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault(); first.focus()
+      }
+    }
+    document.addEventListener('keydown', onKey)
     return () => {
       document.removeEventListener('keydown', onKey)
       document.body.style.overflow = ''
@@ -48,6 +69,8 @@ export function MobileSidebar() {
 
       {/* Drawer */}
       <aside
+        id="mobile-sidebar"
+        ref={drawerRef}
         className="absolute top-0 left-0 h-full w-72 bg-white shadow-lg flex flex-col animate-[slideUp_200ms_ease-out]"
         role="dialog"
         aria-modal="true"

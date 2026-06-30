@@ -25,12 +25,13 @@ export function ToastContainer() {
     <div
       aria-live="polite"
       aria-atomic="false"
+      aria-label="Notifications"
       className="fixed bottom-20 right-6 z-[9999] flex flex-col gap-2 lg:bottom-6"
     >
       {toasts.map(t => (
         <div
           key={t.id}
-          role="status"
+          role="alert"
           className={
             `flex items-center gap-3 px-5 py-3 rounded-xl shadow-lg max-w-xs ` +
             `font-heading text-[13px] font-medium animate-[slideUp_200ms_ease-out] ` +

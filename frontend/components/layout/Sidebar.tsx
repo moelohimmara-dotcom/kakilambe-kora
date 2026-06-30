@@ -133,6 +133,7 @@ function NavLink({ item, pathname, collapsed }: { item: NavItem; pathname: strin
           }`
         }
         aria-current={isActive ? 'page' : undefined}
+        aria-label={collapsed ? item.label : undefined}
         title={collapsed ? item.label : undefined}
       >
         <span className="shrink-0 w-[18px] h-[18px] flex items-center justify-center">

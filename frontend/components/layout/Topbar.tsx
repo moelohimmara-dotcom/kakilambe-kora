@@ -34,7 +34,8 @@ export function Topbar({ title, children }: TopbarProps) {
         onClick={openMobile}
         className="md:hidden flex items-center justify-center w-9 h-9 rounded-md text-gray-dk hover:bg-gray-pale transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange"
         aria-label="Ouvrir le menu"
-        aria-expanded="false"
+        aria-expanded={false}
+        aria-controls="mobile-sidebar"
       >
         <HamburgerIcon />
       </button>

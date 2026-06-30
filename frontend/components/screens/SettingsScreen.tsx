@@ -30,12 +30,14 @@ export function SettingsScreen() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 mb-6 bg-gray-pale rounded-lg p-1 w-fit" role="tablist">
+      <div className="flex gap-1 mb-6 bg-gray-pale rounded-lg p-1 w-fit" role="tablist" aria-label="Sections des paramètres">
         {TABS.map(t => (
           <button
             key={t.key}
+            id={`settings-tab-${t.key}`}
             role="tab"
             aria-selected={tab === t.key}
+            aria-controls="settings-panel"
             onClick={() => setTab(t.key)}
             className={
               `px-4 py-1.5 rounded-md font-heading text-[12px] font-semibold transition-all ` +
@@ -48,9 +50,11 @@ export function SettingsScreen() {
         ))}
       </div>
 
-      {tab === 'wordpress' && <WordPressTab />}
-      {tab === 'prompts' && <PromptsTab />}
-      {tab === 'providers' && <ProvidersTab />}
+      <div id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${tab}`}>
+        {tab === 'wordpress' && <WordPressTab />}
+        {tab === 'prompts' && <PromptsTab />}
+        {tab === 'providers' && <ProvidersTab />}
+      </div>
     </div>
   )
 }
@@ -224,15 +228,19 @@ function PromptsTab() {
                 aria-label={`Contenu du prompt ${prompt.name}`}
               />
               <div className="flex items-center gap-4">
-                <label className="font-heading text-[12px] text-gray-dk">
+                <label htmlFor={`temp-${prompt.id}`} className="font-heading text-[12px] text-gray-dk">
                   Température : <strong>{editTemp}</strong>
                 </label>
                 <input
+                  id={`temp-${prompt.id}`}
                   type="range"
                   min={0} max={1} step={0.05}
                   value={editTemp}
                   onChange={e => setEditTemp(Number(e.target.value))}
                   className="flex-1 accent-orange"
+                  aria-valuemin={0}
+                  aria-valuemax={1}
+                  aria-valuenow={editTemp}
                 />
               </div>
               <div className="flex gap-2">
@@ -332,7 +340,14 @@ function ProviderRow({ provider, onRefetch }: { provider: Provider; onRefetch: (
             <span className="font-heading text-[10px] text-gray-dk">Utilisation</span>
             <span className="font-heading text-[10px] text-gray-dk">{usagePct}%</span>
           </div>
-          <div className="h-1.5 bg-gray-pale rounded-full overflow-hidden">
+          <div
+            className="h-1.5 bg-gray-pale rounded-full overflow-hidden"
+            role="progressbar"
+            aria-valuenow={usagePct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`Utilisation ${provider.name} : ${usagePct}%`}
+          >
             <div
               className={`h-full rounded-full transition-all ${usagePct > 80 ? 'bg-danger' : usagePct > 60 ? 'bg-warning' : 'bg-sage'}`}
               style={{ width: `${Math.min(usagePct, 100)}%` }}

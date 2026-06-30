@@ -39,7 +39,6 @@ export function Toggle({
         id={id}
         role="switch"
         aria-checked={checked}
-        aria-label={label}
         disabled={disabled}
         onClick={() => !disabled && onChange(!checked)}
         className={

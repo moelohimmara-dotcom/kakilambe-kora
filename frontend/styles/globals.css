@@ -505,3 +505,17 @@ body {
   .bottom-nav { display: flex; align-items: center; justify-content: space-around; }
   .page-content { padding: 16px; }
 }
+
+/* ── Accessibilité : prefers-reduced-motion ──────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .badge-pulse,
+  .streaming-cursor::after { animation: none !important; }
+  .skeleton { animation: none !important; background: var(--gray-pale); }
+}

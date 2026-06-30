@@ -74,6 +74,7 @@ export default function LoginPage() {
                 required
                 placeholder="vous@kakilambe.com"
                 className="form-input"
+                aria-invalid={error ? true : undefined}
                 aria-describedby={error ? 'login-error' : undefined}
               />
             </div>
@@ -93,6 +94,8 @@ export default function LoginPage() {
                 required
                 placeholder="••••••••"
                 className="form-input"
+                aria-invalid={error ? true : undefined}
+                aria-describedby={error ? 'login-error' : undefined}
               />
             </div>
 
