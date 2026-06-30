@@ -1,9 +1,11 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import time
 
 from core.config import settings
+from core.scheduler import start_scheduler, scheduler
 from api.agent_routes import router as agent_router
 from api.auth_routes import router as auth_router
 from api.chat_routes import router as chat_router
@@ -11,12 +13,21 @@ from api.article_routes import router as article_router
 from api.provider_routes import router as provider_router
 from api.settings_routes import router as settings_router
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    start_scheduler()
+    yield
+    scheduler.shutdown(wait=False)
+
+
 app = FastAPI(
     title="KORA API",
     description="GuinéePress Intelligence — Backend KORA",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

@@ -9,18 +9,19 @@ scheduler = AsyncIOScheduler()
 
 
 async def _run_kora_cycle():
-    from agent.graph import kora_graph
+    from agent.graph import kora_graph_auto
     import uuid
 
     cycle_id = str(uuid.uuid4())
-    logger.info("scheduled_cycle_start", cycle_id=cycle_id, mode="semi")
+    logger.info("scheduled_cycle_start", cycle_id=cycle_id, mode="auto")
     try:
         config = {"configurable": {"thread_id": cycle_id}}
-        await kora_graph.ainvoke(
-            {"mode": "semi", "cycle_id": cycle_id, "published_count": 0, "errors": [],
+        await kora_graph_auto.ainvoke(
+            {"mode": "auto", "cycle_id": cycle_id, "published_count": 0, "errors": [],
              "hitl_approved": False, "raw_sources": [], "selected_articles": [],
              "current_article": None, "generated_article": None,
-             "image_url": None, "wp_media_id": None, "wp_post_id": None},
+             "image_url": None, "wp_media_id": None, "wp_post_id": None,
+             "article_index": 0},
             config=config,
         )
         logger.info("scheduled_cycle_complete", cycle_id=cycle_id)
