@@ -28,13 +28,13 @@ PROVIDER_CONFIG = {
         "api_key_env": "GEMINI_API_KEY",
     },
     "cerebras": {
-        "primary_model": "cerebras/llama-3.3-70b",
+        "primary_model": "cerebras/llama3.3-70b",
         "daily_token_limit": 200_000,
         "rpm_limit": 30,
         "api_key_env": "CEREBRAS_API_KEY",
     },
     "openrouter": {
-        "primary_model": "openrouter/meta-llama/llama-3.1-8b-instruct:free",
+        "primary_model": "openrouter/meta-llama/llama-3.1-8b-instruct",
         "daily_token_limit": None,
         "rpm_limit": 20,
         "api_key_env": "OPENROUTER_API_KEY",
@@ -127,13 +127,18 @@ class KoraLLMRouter:
         try:
             from db.connection import get_db
             from sqlalchemy import text
+            from datetime import datetime as _dt
 
             def _parse_ts(val):
+                """Convertit une string ISO en datetime (asyncpg attend un objet datetime)."""
                 if val is None:
                     return None
-                if isinstance(val, str):
+                if isinstance(val, _dt):
                     return val
-                return val
+                try:
+                    return _dt.fromisoformat(val)
+                except (ValueError, TypeError):
+                    return None
 
             async with get_db() as db:
                 await db.execute(text("""
@@ -257,16 +262,26 @@ class KoraLLMRouter:
             logger.warning("context_exceeded", provider=active)
             raise
 
+        except litellm.NotFoundError as e:
+            # 404 modèle invalide → EXHAUSTED (permanent, pas de retry)
+            state = self.get_provider_state(active)
+            state["status"] = "EXHAUSTED"
+            state["last_error"] = str(e)[:200]
+            self.set_provider_state(active, state)
+            await self.persist_to_db(active, state)
+            logger.error("llm_model_not_found", provider=active, error=str(e)[:200])
+            raise
+
         except Exception as e:
             state = self.get_provider_state(active)
             state["status"] = "OFFLINE"
             state["rate_limited_until"] = (
                 datetime.utcnow() + timedelta(minutes=5)
             ).isoformat()
-            state["last_error"] = str(e)
+            state["last_error"] = str(e)[:200]
             self.set_provider_state(active, state)
             await self.persist_to_db(active, state)
-            logger.error("llm_error", provider=active, error=str(e))
+            logger.error("llm_error", provider=active, error=str(e)[:200])
             raise
 
     def _set_litellm_keys(self):
