@@ -52,15 +52,20 @@ class KoraLLMRouter:
         self._redis: Optional[redis.Redis] = None
 
     @property
-    def redis(self) -> redis.Redis:
-        if self._redis is None:
-            self._redis = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    def redis(self) -> Optional[redis.Redis]:
+        if self._redis is None and settings.REDIS_URL:
+            try:
+                self._redis = redis.from_url(settings.REDIS_URL, decode_responses=True)
+            except Exception:
+                pass
         return self._redis
 
     # ── Provider state ──────────────────────────────────────────────────────
 
     def get_provider_state(self, provider: str) -> dict:
         try:
+            if self.redis is None:
+                return {}
             data = self.redis.get(f"provider:{provider}")
             if data:
                 return json.loads(data)
@@ -75,6 +80,8 @@ class KoraLLMRouter:
         }
 
     def set_provider_state(self, provider: str, state: dict):
+        if self.redis is None:
+            return
         try:
             self.redis.setex(f"provider:{provider}", 86400, json.dumps(state))
         except Exception as e:

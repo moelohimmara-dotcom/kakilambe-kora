@@ -21,6 +21,9 @@ class GmailClient:
         return build("gmail", "v1", credentials=creds)
 
     async def send_report(self, subject: str, body_html: str, to: Optional[str] = None):
+        if not settings.GMAIL_REFRESH_TOKEN or not settings.GMAIL_CLIENT_ID:
+            logger.info("gmail_skipped", reason="credentials not configured")
+            return
         recipient = to or settings.GMAIL_RECIPIENT
         msg = MIMEText(body_html, "html")
         msg["to"] = recipient
