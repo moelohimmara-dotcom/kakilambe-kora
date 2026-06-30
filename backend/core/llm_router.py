@@ -1,5 +1,9 @@
+"""
+KoraLLMRouter — fallback chain groq → gemini → cerebras → openrouter
+State persistence : in-memory (sync) + Supabase provider_states (async)
+Pas de Redis requis.
+"""
 import litellm
-import redis
 import json
 from datetime import datetime, timedelta
 from typing import Optional
@@ -49,18 +53,10 @@ PROVIDER_ORDER = ["groq", "gemini", "cerebras", "openrouter"]
 
 class KoraLLMRouter:
     def __init__(self):
-        self._redis: Optional[redis.Redis] = None
+        # Cache mémoire — source de vérité pendant l'exécution
+        self._cache: dict[str, dict] = {}
 
-    @property
-    def redis(self) -> Optional[redis.Redis]:
-        if self._redis is None and settings.REDIS_URL:
-            try:
-                self._redis = redis.from_url(settings.REDIS_URL, decode_responses=True)
-            except Exception:
-                pass
-        return self._redis
-
-    # ── Provider state ──────────────────────────────────────────────────────
+    # ── State defaults ───────────────────────────────────────────────────────
 
     def _default_state(self) -> dict:
         return {
@@ -71,37 +67,16 @@ class KoraLLMRouter:
             "exhausted_until": None,
         }
 
+    # ── Sync in-memory access (utilisé pendant les cycles) ───────────────────
+
     def get_provider_state(self, provider: str) -> dict:
-        if self.redis is None:
-            return self._default_state()
-        try:
-            data = self.redis.get(f"provider:{provider}")
-            if data:
-                return json.loads(data)
-        except Exception:
-            pass
-        return self._default_state()
+        return dict(self._cache.get(provider, self._default_state()))
 
     def set_provider_state(self, provider: str, state: dict):
-        if self.redis is None:
-            return
-        try:
-            self.redis.setex(f"provider:{provider}", 86400, json.dumps(state))
-        except Exception as e:
-            logger.error("redis_write_failed", provider=provider, error=str(e))
+        self._cache[provider] = dict(state)
 
     def get_all_provider_states(self) -> dict:
         return {p: self.get_provider_state(p) for p in PROVIDER_ORDER}
-
-    def reset_all_providers(self):
-        for provider in PROVIDER_ORDER:
-            self.set_provider_state(provider, {
-                "status": "ACTIVE",
-                "tokens_used_today": 0,
-                "requests_today": 0,
-                "rate_limited_until": None,
-                "exhausted_until": None,
-            })
 
     def override_provider_status(self, provider: str, status: str):
         if provider not in PROVIDER_CONFIG:
@@ -109,6 +84,89 @@ class KoraLLMRouter:
         state = self.get_provider_state(provider)
         state["status"] = status
         self.set_provider_state(provider, state)
+
+    def reset_all_providers(self):
+        for provider in PROVIDER_ORDER:
+            self.set_provider_state(provider, self._default_state())
+
+    # ── Supabase persistence ─────────────────────────────────────────────────
+
+    async def load_from_db(self):
+        """Charge les états depuis Supabase au démarrage de l'app."""
+        try:
+            from db.connection import get_db
+            from sqlalchemy import text
+            async with get_db() as db:
+                result = await db.execute(text(
+                    "SELECT provider, status, tokens_used_today, requests_today, "
+                    "last_error, rate_limited_until, exhausted_until "
+                    "FROM provider_states"
+                ))
+                rows = result.mappings().all()
+            for row in rows:
+                self._cache[row["provider"]] = {
+                    "status": row["status"] or "ACTIVE",
+                    "tokens_used_today": row["tokens_used_today"] or 0,
+                    "requests_today": row["requests_today"] or 0,
+                    "rate_limited_until": (
+                        row["rate_limited_until"].isoformat()
+                        if row["rate_limited_until"] else None
+                    ),
+                    "exhausted_until": (
+                        row["exhausted_until"].isoformat()
+                        if row["exhausted_until"] else None
+                    ),
+                    "last_error": row["last_error"],
+                }
+            logger.info("provider_states_loaded", count=len(rows))
+        except Exception as e:
+            logger.warning("provider_states_load_failed", error=str(e))
+
+    async def persist_to_db(self, provider: str, state: dict):
+        """Persiste un état provider dans Supabase (upsert)."""
+        try:
+            from db.connection import get_db
+            from sqlalchemy import text
+
+            def _parse_ts(val):
+                if val is None:
+                    return None
+                if isinstance(val, str):
+                    return val
+                return val
+
+            async with get_db() as db:
+                await db.execute(text("""
+                    INSERT INTO provider_states
+                        (provider, status, tokens_used_today, requests_today,
+                         last_error, rate_limited_until, exhausted_until, updated_at)
+                    VALUES
+                        (:provider, :status, :tokens, :requests,
+                         :last_error, :rate_limited_until, :exhausted_until, now())
+                    ON CONFLICT (provider) DO UPDATE SET
+                        status              = EXCLUDED.status,
+                        tokens_used_today   = EXCLUDED.tokens_used_today,
+                        requests_today      = EXCLUDED.requests_today,
+                        last_error          = EXCLUDED.last_error,
+                        rate_limited_until  = EXCLUDED.rate_limited_until,
+                        exhausted_until     = EXCLUDED.exhausted_until,
+                        updated_at          = now()
+                """), {
+                    "provider":            provider,
+                    "status":              state.get("status", "ACTIVE"),
+                    "tokens":              state.get("tokens_used_today", 0),
+                    "requests":            state.get("requests_today", 0),
+                    "last_error":          state.get("last_error"),
+                    "rate_limited_until":  _parse_ts(state.get("rate_limited_until")),
+                    "exhausted_until":     _parse_ts(state.get("exhausted_until")),
+                })
+        except Exception as e:
+            logger.warning("provider_state_persist_failed", provider=provider, error=str(e))
+
+    async def persist_all_to_db(self):
+        """Persiste tous les états en base (utilisé par reset)."""
+        for provider, state in self._cache.items():
+            await self.persist_to_db(provider, state)
 
     # ── Active provider selection ────────────────────────────────────────────
 
@@ -125,18 +183,11 @@ class KoraLLMRouter:
                     continue
                 return provider
 
-            elif status == "RATE_LIMITED":
+            elif status in ("RATE_LIMITED", "OFFLINE"):
                 limited_until = state.get("rate_limited_until")
                 if limited_until and datetime.utcnow().isoformat() > limited_until:
                     state["status"] = "ACTIVE"
-                    self.set_provider_state(provider, state)
-                    return provider
-
-            elif status == "OFFLINE":
-                # retry after 5 minutes
-                limited_until = state.get("rate_limited_until")
-                if limited_until and datetime.utcnow().isoformat() > limited_until:
-                    state["status"] = "ACTIVE"
+                    state["rate_limited_until"] = None
                     self.set_provider_state(provider, state)
                     return provider
 
@@ -171,7 +222,6 @@ class KoraLLMRouter:
         if response_format:
             params["response_format"] = response_format
 
-        # Inject API keys via env-aware approach
         self._set_litellm_keys()
 
         try:
@@ -182,6 +232,7 @@ class KoraLLMRouter:
                 state["tokens_used_today"] += response.usage.total_tokens
                 state["requests_today"] += 1
             self.set_provider_state(active, state)
+            await self.persist_to_db(active, state)
 
             logger.info(
                 "llm_success",
@@ -198,6 +249,7 @@ class KoraLLMRouter:
                 datetime.utcnow() + timedelta(seconds=60)
             ).isoformat()
             self.set_provider_state(active, state)
+            await self.persist_to_db(active, state)
             logger.warning("rate_limited", provider=active)
             raise
 
@@ -213,6 +265,7 @@ class KoraLLMRouter:
             ).isoformat()
             state["last_error"] = str(e)
             self.set_provider_state(active, state)
+            await self.persist_to_db(active, state)
             logger.error("llm_error", provider=active, error=str(e))
             raise
 

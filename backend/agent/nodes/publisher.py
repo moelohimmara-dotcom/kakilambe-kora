@@ -87,15 +87,11 @@ async def run(state: KoraState) -> KoraState:
         }
 
 
+_last_publish_ts: float = 0.0
+
+
 async def _queue_delay():
-    """Enqueue un délai 2h via Upstash. Si Redis indisponible, no-op."""
-    try:
-        from core.config import settings
-        import redis.asyncio as aioredis
-        r = aioredis.from_url(settings.REDIS_URL)
-        # On enregistre le timestamp du dernier publish
-        import time
-        await r.set("kora:last_publish_ts", int(time.time()), ex=7200)
-        await r.aclose()
-    except Exception:
-        pass  # délai non critique
+    """Enregistre le timestamp du dernier publish en mémoire (no-op si conteneur redémarre)."""
+    import time
+    global _last_publish_ts
+    _last_publish_ts = time.time()

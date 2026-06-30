@@ -25,6 +25,8 @@ from api.settings_routes import router as settings_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from core.llm_router import llm_router
+    await llm_router.load_from_db()
     start_scheduler()
     yield
     scheduler.shutdown(wait=False)
@@ -82,17 +84,8 @@ async def health_database():
 
 @app.get("/health/redis", tags=["system"])
 async def health_redis():
-    try:
-        import redis.asyncio as aioredis
-        url = settings.REDIS_URL
-        if not url:
-            return {"status": "error", "detail": "REDIS_URL not configured"}
-        r = aioredis.from_url(url, socket_timeout=3)
-        await r.ping()
-        await r.aclose()
-        return {"status": "ok"}
-    except Exception as e:
-        return {"status": "error", "detail": str(e)}
+    """Redis remplacé par Supabase provider_states — toujours OK."""
+    return {"status": "ok", "detail": "redis replaced by supabase provider_states"}
 
 @app.get("/health/wordpress", tags=["system"])
 async def health_wordpress():

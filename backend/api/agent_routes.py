@@ -2,7 +2,7 @@
 Routes FastAPI — Agent KORA
 POST /api/agent/run       → Lance un cycle
 GET  /api/agent/status    → État du cycle en cours
-GET  /api/agent/stream    → SSE : logs temps réel
+GET  /api/agent/stream    → SSE : logs temps réel (asyncio Queue, sans Redis)
 POST /api/agent/resume/{cycle_id} → Reprend après validation HITL
 """
 import uuid
@@ -15,13 +15,18 @@ from sqlalchemy import text
 from typing import Optional
 
 from core.logger import logger
-from core.config import settings
 
 router = APIRouter()
 
-# ── Store cycles en mémoire (Redis comme source de vérité en prod) ────────────
-# { cycle_id: { status, mode, article_index, published_count, errors, ... } }
+# ── Store cycles en mémoire ───────────────────────────────────────────────────
+# { cycle_id: { status, mode, published_count, errors } }
 _cycles: dict = {}
+
+# ── Queues de logs SSE par cycle (asyncio, pas de Redis requis) ───────────────
+# { cycle_id: asyncio.Queue }  — créée au lancement, nettoyée après 5 min
+_log_queues: dict[str, asyncio.Queue] = {}
+
+_SENTINEL = object()  # signal de fin de stream
 
 
 class RunRequest(BaseModel):
@@ -90,7 +95,9 @@ async def run_cycle(body: RunRequest):
             logger.error("cycle_run_failed", cycle_id=cycle_id, error=str(e))
             await _update_cycle_status(cycle_id, "FAILED")
 
+    _log_queues[cycle_id] = asyncio.Queue()
     asyncio.create_task(_run())
+    asyncio.create_task(_cleanup_queue(cycle_id, delay=300))
     logger.info("cycle_started", cycle_id=cycle_id, mode=body.mode)
 
     return {
@@ -133,44 +140,31 @@ async def get_status(cycle_id: Optional[str] = None):
 
 @router.get("/stream")
 async def stream_logs(cycle_id: Optional[str] = None):
-    """SSE : émet les logs structurés en temps réel via Redis pub/sub."""
+    """SSE : émet les logs structurés en temps réel via asyncio Queue (sans Redis)."""
 
     async def event_generator():
-        channel = f"kora:logs:{cycle_id}" if cycle_id else "kora:logs"
-        try:
-            import redis.asyncio as aioredis
-            r = aioredis.from_url(settings.REDIS_URL)
-            pubsub = r.pubsub()
-            await pubsub.subscribe(channel)
+        queue = _log_queues.get(cycle_id) if cycle_id else None
 
-            yield _sse_event({"event": "connected", "channel": channel})
+        yield _sse_event({"event": "connected", "cycle_id": cycle_id})
 
-            while True:
-                message = await pubsub.get_message(
-                    ignore_subscribe_messages=True, timeout=1.0
-                )
-                if message and message["type"] == "message":
-                    yield _sse_event(json.loads(message["data"]))
-
-                # Heartbeat toutes les 10s pour garder la connexion
-                await asyncio.sleep(0.5)
-
-        except Exception:
-            # Fallback sans Redis : polling de l'état en mémoire
-            last_sent = 0
-            while True:
-                if cycle_id and cycle_id in _cycles:
-                    cycle = _cycles[cycle_id]
-                    current_count = cycle.get("published_count", 0)
-                    if current_count != last_sent:
-                        last_sent = current_count
-                        yield _sse_event({
-                            "level": "INFO",
-                            "event": f"{current_count} article(s) publié(s)",
-                            "status": cycle["status"],
-                        })
-                yield _sse_event({"event": "heartbeat"})
+        heartbeat_counter = 0
+        while True:
+            if queue is not None:
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=5.0)
+                    if msg is _SENTINEL:
+                        yield _sse_event({"event": "done"})
+                        break
+                    yield _sse_event(msg)
+                    continue
+                except asyncio.TimeoutError:
+                    pass
+            else:
                 await asyncio.sleep(5)
+
+            # Heartbeat toutes les 5s pour garder la connexion HTTP
+            heartbeat_counter += 1
+            yield _sse_event({"event": "heartbeat", "tick": heartbeat_counter})
 
     return StreamingResponse(
         event_generator(),
@@ -287,17 +281,28 @@ def _sse_event(data: dict) -> str:
 
 
 def _emit_log(cycle_id: str, level: str, event: str):
-    """Publie un log sur Redis et dans le logger structuré."""
+    """Publie un log dans la queue SSE du cycle et dans le logger structuré."""
     payload = {"cycle_id": cycle_id[:8], "level": level, "event": event}
     logger.info("cycle_event", cycle_id=cycle_id[:8], msg=event)
-    try:
-        import redis as redis_sync
-        r = redis_sync.from_url(settings.REDIS_URL, decode_responses=True)
-        r.publish("kora:logs", json.dumps(payload))
-        r.publish(f"kora:logs:{cycle_id}", json.dumps(payload))
-        r.close()
-    except Exception:
-        pass
+    queue = _log_queues.get(cycle_id)
+    if queue is not None:
+        try:
+            queue.put_nowait(payload)
+        except asyncio.QueueFull:
+            pass
+
+
+async def _cleanup_queue(cycle_id: str, delay: int = 300):
+    """Envoie le sentinel de fin puis supprime la queue après `delay` secondes."""
+    await asyncio.sleep(delay)
+    queue = _log_queues.get(cycle_id)
+    if queue is not None:
+        try:
+            queue.put_nowait(_SENTINEL)
+        except asyncio.QueueFull:
+            pass
+        await asyncio.sleep(30)
+        _log_queues.pop(cycle_id, None)
 
 
 async def _persist_cycle(cycle_id: str, mode: str):

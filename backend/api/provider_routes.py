@@ -41,6 +41,8 @@ async def override_provider(provider: str, body: OverrideRequest):
         llm_router.override_provider_status(provider, body.status)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    state = llm_router.get_provider_state(provider)
+    await llm_router.persist_to_db(provider, state)
     return {"provider": provider, "status": body.status, "updated": True}
 
 
@@ -48,4 +50,5 @@ async def override_provider(provider: str, body: OverrideRequest):
 async def reset_providers():
     """Reset all provider states to ACTIVE."""
     llm_router.reset_all_providers()
+    await llm_router.persist_all_to_db()
     return {"reset": True, "providers": PROVIDER_ORDER}
