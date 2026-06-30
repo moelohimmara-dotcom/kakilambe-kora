@@ -4,12 +4,66 @@ Deux passes LLM :
   1. Sélection éditoriale (3-5 articles les plus pertinents)
   2. Déduplication sémantique + agrégation convergente
      → Les sujets couverts par plusieurs sources sont fusionnés en un article enrichi.
+
+Priorisation des sources (déterministe, pas laissée au jugement seul du LLM) :
+  Niveau 1 — domaines actifs dans la table rss_sources (sources guinéennes vérifiées par l'utilisateur)
+  Niveau 2 — médias panafricains/internationaux de référence (liste fixe ci-dessous)
+  Niveau 3 — tout le reste
+Note : pas de règle ".gn" — les médias guinéens réels (africaguinee.com, ledjely.com...)
+utilisent des domaines .com, pas l'extension .gn.
 """
 import json
 from typing import List
 from agent.state import KoraState
 from core.llm_router import llm_router
 from core.logger import logger
+
+_PANAFRICAN_DOMAINS = {
+    "jeuneafrique.com", "rfi.fr", "bbc.com", "bbc.co.uk", "africanews.com",
+    "lemonde.fr", "apanews.net", "afrik.com", "voaafrique.com", "dw.com",
+}
+
+_GUINEA_KEYWORDS = (
+    "guinee", "guinée", "guinea", "conakry", "kankan", "labe", "nzerekore",
+    "mamou", "kindia", "boke", "faranah", "kissidougou", "siguiri",
+)
+
+_ACCENT_MAP = str.maketrans("àâäéèêëîïôöùûüç", "aaaeeeeiioouuuc")
+
+
+def _domain_of(url: str) -> str:
+    try:
+        return url.split("/")[2].replace("www.", "").lower()
+    except IndexError:
+        return ""
+
+
+async def _load_trusted_domains() -> set:
+    """Domaines actifs dans rss_sources — sources Niveau 1, curées par l'utilisateur."""
+    try:
+        from db.connection import get_db
+        from sqlalchemy import text
+        async with get_db() as db:
+            result = await db.execute(text("SELECT url FROM rss_sources WHERE is_active = true"))
+            rows = result.mappings().all()
+        return {_domain_of(r["url"]) for r in rows if r["url"]}
+    except Exception as e:
+        logger.warning("selector_trusted_domains_failed", error=str(e))
+        return set()
+
+
+def _source_tier(domain: str, trusted: set) -> int:
+    if domain in trusted:
+        return 1
+    if domain in _PANAFRICAN_DOMAINS:
+        return 2
+    return 3
+
+
+def _is_guinea_relevant(article: dict) -> bool:
+    blob = f"{article.get('title','')} {article.get('content','') or article.get('markdown_content','')}"
+    blob = blob.lower().translate(_ACCENT_MAP)
+    return any(kw.translate(_ACCENT_MAP) in blob for kw in _GUINEA_KEYWORDS)
 
 # ── Passe 1 : Sélection éditoriale ───────────────────────────────────────────
 
@@ -19,11 +73,12 @@ Voici {n} articles collectés depuis des sources d'actualité africaine.
 Sélectionne entre 3 et 5 articles à rédiger pour notre audience guinéenne.
 
 Critères de sélection (par ordre de priorité) :
-1. Pertinence directe pour la Guinée ou l'Afrique de l'Ouest
-2. Impact sur la vie quotidienne des lecteurs
-3. Originalité et valeur informationnelle
-4. Potentiel d'engagement (politique, économie, société, sport)
-5. Sources fiables
+1. Niveau 1 (sources guinéennes vérifiées) prioritaires sur Niveau 2 (médias panafricains),
+   eux-mêmes prioritaires sur Niveau 3 (à ne retenir que si la pertinence Guinée est forte).
+2. Pertinence directe pour la Guinée ou l'Afrique de l'Ouest
+3. Impact sur la vie quotidienne des lecteurs
+4. Originalité et valeur informationnelle
+5. Potentiel d'engagement (politique, économie, société, sport)
 
 Articles disponibles :
 {articles_summary}
@@ -83,12 +138,27 @@ async def run(state: KoraState) -> KoraState:
         logger.warning("node_selector_no_sources", cycle_id=state["cycle_id"])
         return {**state, "selected_articles": []}
 
+    # ── Classification des sources (déterministe) ─────────────────────────────
+    trusted_domains = await _load_trusted_domains()
+    for a in raw:
+        a["_domain"] = _domain_of(a.get("url", ""))
+        a["_tier"] = _source_tier(a["_domain"], trusted_domains)
+
+    # Filtre de pertinence : ne garde les sources Niveau 3 que si elles mentionnent
+    # explicitement la Guinée. N'écrase jamais la liste si le filtre la viderait
+    # entièrement (sécurité — évite un cycle sans aucun article).
+    filtered = [a for a in raw if a["_tier"] <= 2 or _is_guinea_relevant(a)]
+    if filtered:
+        raw = filtered
+    else:
+        logger.warning("selector_relevance_filter_empty_fallback", cycle_id=state["cycle_id"])
+
     # ── Passe 1 : Sélection éditoriale ────────────────────────────────────────
     summaries = []
     for i, a in enumerate(raw):
         content = (a.get("markdown_content") or a.get("content", ""))[:300]
         summaries.append(
-            f"[{i}] Titre: {a.get('title', 'Sans titre')}\n"
+            f"[{i}] Niveau {a.get('_tier', 3)} · Titre: {a.get('title', 'Sans titre')}\n"
             f"    URL: {a.get('url', '')}\n"
             f"    Extrait: {content.strip()}..."
         )

@@ -13,8 +13,12 @@ guinéennes sur kakilambe.com, déployé sur DigitalOcean App Platform
 
 Outils réels : Tavily (recherche RSS/web), Firecrawl + BrightData
 (scraping contenu), LiteLLM router (groq→gemini→cerebras→openrouter),
-fal.ai (génération image), WordPress REST API v2, Supabase Postgres,
-Resend (email — clé API en attente d'activation par l'utilisateur).
+pollinations.ai (génération image, gratuit, sans clé — voir note ci-dessous),
+WordPress REST API v2, Supabase Postgres, Resend (email, fallback SMTP Gmail).
+
+Note image gen : `core/config.py` déclare IMAGE_GEN_API_KEY/IMAGE_GEN_PROVIDER="fal"
+mais ce sont des champs morts — `integrations/image_gen_client.py` utilise en réalité
+l'API pollinations.ai en dur, sans lire ces variables. Pas de fal.ai branché à ce jour.
 </role>
 
 <memoire>
@@ -56,7 +60,15 @@ concurrence max 4) → filtre (garder seulement contenu >300 caractères) →
 max 8 articles (limite mémoire 512MB du plan DigitalOcean).
 
 ÉTAPE 2 — SÉLECTION + AGRÉGATION (node: selector, backend/agent/nodes/selector.py — 2 passes LLM)
-Pass 1 : sélection éditoriale de 3 à 5 articles parmi les sources scrapées.
+Classification déterministe (Python, pas LLM) des sources avant la passe 1 :
+Niveau 1 = domaines actifs dans rss_sources (curés par l'utilisateur),
+Niveau 2 = médias panafricains de référence (liste fixe : Jeune Afrique, RFI,
+BBC, Africanews, Le Monde, APA News, Afrik.com, VOA Afrique, DW),
+Niveau 3 = tout le reste, gardé seulement si mention explicite de la Guinée
+(mots-clés : Guinée/Conakry/Kankan/Labé/Nzérékoré/Mamou/Kindia/Boké...).
+Le filtre Niveau 3 ne s'applique jamais s'il viderait totalement la liste.
+
+Pass 1 : sélection éditoriale de 3 à 5 articles, priorité Niveau 1 > 2 > 3.
 Pass 2 : déduplication sémantique — regroupe les articles traitant du
 même événement (même si sources différentes), fusionne en
 "aggregated_sources" avec source primaire + jusqu'à 3 complémentaires
@@ -64,22 +76,33 @@ même événement (même si sources différentes), fusionne en
 Si pass 2 échoue → fallback sur résultat pass 1 non agrégé.
 
 ÉTAPE 3 — RÉDACTION (node: writer, backend/agent/nodes/writer.py)
-TON : neutre, factuel, professionnel, français impeccable.
+TON : neutre, factuel, sans ligne politique — KORA ne favorise aucun acteur,
+parti ou gouvernement. Style BBC News Afrique / New York Times.
 Structure obligatoire :
-- Titre : informatif, sans clic-bait
-- Chapeau : 2-3 phrases (Qui/Quoi/Quand/Où/Pourquoi)
-- Corps : rédaction originale, faits vérifiés, sources multiples
-  citées si agrégation (bloc --- principal + jusqu'à 3 blocs complémentaires)
+- Titre : max 70 caractères, formule question/citation/chiffre/contraste,
+  toujours un repère géographique
+- Chapeau : 2 à 4 phrases d'accroche (scène, tension ou chiffre — pas un résumé)
+- Corps en strates (6 paragraphes max) : faits bruts → pourquoi/comment →
+  citations directes → contexte → enjeux chiffrés → perspective ouverte
+- Sous-titres Markdown tous les ~150 mots
+- Interdits : adjectifs non factuels, expressions floues, voix passive
+  excessive, répétitions, affirmations sans source
 - Méta-description SEO (max 155 caractères) + mots-clés
 
 Zéro invention — règle anti-hallucination stricte sur sources multiples.
+Catégorie WordPress résolue de façon déterministe en Python (`_resolve_category_id`)
+à partir d'un `categorie_label` choisi par le LLM dans une liste fermée — jamais
+un ID deviné/halluciné par le modèle. IDs confirmés : Politique=4, Économie=5 ;
+tout le reste retombe sur le défaut 44 tant que les vrais IDs WordPress ne sont
+pas communiqués.
 Sauvegarde en DB (mode-aware) :
   - mode "semi" → status="PENDING_REVIEW", origin="AGENT_SEMI"
   - mode "auto" → status="DRAFT", origin="AGENT_AUTO"
 
-ÉTAPE 4 — ILLUSTRATION (node: generate_image)
-Génération via fal.ai (IMAGE_GEN_PROVIDER="fal") → upload sur WordPress
-media via wp_client.upload_media() → URL hébergée WordPress stockée.
+ÉTAPE 4 — ILLUSTRATION (node: generate_image, backend/agent/nodes/illustrator.py)
+Génération via pollinations.ai (image_prompt en anglais, généré par le writer)
+→ upload sur WordPress media via wp_client.upload_media() → URL hébergée
+WordPress stockée. Pas de fal.ai branché malgré le nom de variable IMAGE_GEN_PROVIDER.
 
 ÉTAPE 5 — VALIDATION HUMAINE (HITL — mode semi uniquement)
 LangGraph interrupt_before=["publish_wordpress"] sur kora_graph_semi
@@ -98,12 +121,15 @@ Succès → status="PUBLISHED" + wp_url enregistrée, published_at=now().
 Erreur → status="FAILED", erreur loggée (n'arrête pas le traitement
 des autres articles du cycle).
 
-ÉTAPE 7 — STREAMING + RAPPORT
+ÉTAPE 7 — STREAMING + RAPPORT (node: send_report, backend/agent/nodes/reporter.py)
 Logs temps réel via SSE (asyncio Queue par cycle_id, sans Redis,
 backend/api/agent_routes.py) sur GET /api/agent/stream. Heartbeat 5s.
 Fin de cycle → cycle.status="COMPLETED" en DB, published_count et
-erreurs consolidés. Email de rapport via Resend vers ADMIN_EMAIL
-(mistermarcket@gmail.com) — RESEND_API_KEY non encore configurée.
+erreurs consolidés. Email de rapport HTML via `integrations/gmail_client.py`
+(nom de fichier trompeur — utilise l'API Resend en priorité, fallback SMTP
+Gmail si RESEND_API_KEY absente) vers GMAIL_RECIPIENT (mistermarcket@gmail.com).
+RESEND_API_KEY non encore configurée → email actuellement silencieux (skip
+si aucune des deux credentials n'est présente).
 </processus>
 
 <regles>
@@ -144,8 +170,22 @@ Liste paginée des cycles : GET /api/cycles · détail : GET /api/cycles/{id}.
 |---|---|
 | `RESEND_API_KEY` | Non configurée — emails de rapport/alerte inactifs |
 | Domaine custom `kora.kakilambe.com` | Non pointé |
-| Catégorie WordPress | Hardcodée à l'ID 1 (pas de résolution dynamique) |
+| Catégorie WordPress | Résolution déterministe (Politique=4, Économie=5, défaut=44) — IDs réels manquants pour Société/Sport/Culture/Sécurité/International |
 | Scheduler cycles auto | Job APScheduler existe, pas connecté à l'UI Settings |
+| fal.ai | Configuré dans `core/config.py` mais non utilisé — image gen réelle = pollinations.ai |
+| `categorie_id` (DB colonne) vs `categorie_wp_id` (Pydantic) | Noms différents entre la table `articles` et le modèle `ArticleKORA` — mapping fait manuellement dans `writer._save_to_db` |
+
+## Note éditoriale — neutralité non négociable
+
+Une instruction reçue le 2026-06-30 demandait d'orienter KORA en faveur du
+gouvernement de transition (CNRD/Président Doumbouya). Cette clause n'a pas
+été implémentée : un système qui se présente comme neutre et factuel tout en
+étant programmé pour favoriser une faction politique produit, à chaque
+publication automatique, du contenu orienté à l'insu du lecteur — sans
+supervision éditoriale sur le fond. Les règles structurelles (titre, chapeau,
+strates, sous-titres, interdits stylistiques) de cette même instruction ont
+en revanche été conservées et appliquées dans `writer.py`, car elles sont
+neutres sur le fond et améliorent la qualité rédactionnelle.
 
 ## Différences avec une architecture n8n/Airtable générique
 

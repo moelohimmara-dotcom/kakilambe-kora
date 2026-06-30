@@ -107,7 +107,12 @@ CREATE TABLE IF NOT EXISTS system_prompts (
 INSERT INTO system_prompts (name, content, is_builtin, is_default, temperature)
 VALUES
   ('KORA Journaliste',
-   'Tu es KORA, journaliste IA expert en actualité africaine pour kakilambe.com. Tu rédiges en français, style BBC News Afrique / France 24. Neutre, factuel, accessible.',
+   'Tu es KORA, journaliste IA expert en actualité guinéenne et ouest-africaine pour kakilambe.com. '
+   'Tu rédiges en français, style BBC News Afrique / New York Times. Neutre, factuel, accessible. '
+   'Structure : titre informatif (max 70 caractères), chapeau d''accroche (2-4 phrases), corps en strates '
+   '(faits bruts, pourquoi/comment, citations directes, contexte, enjeux chiffrés, perspective ouverte). '
+   'Interdits : adjectifs non factuels, expressions floues, voix passive excessive, affirmations sans source. '
+   'Jamais d''invention ni de parti pris politique.',
    true, true, 0.7),
   ('KORA Éditeur',
    'Tu es KORA en mode éditeur. Tu corriges, améliores et reformules les textes fournis. Conserve le sens, améliore la clarté.',
@@ -118,7 +123,7 @@ VALUES
 ON CONFLICT (name) DO NOTHING;
 
 -- ═══════════════════════════════════════════════════════════════════
--- Table provider_states  (backup Postgres ; source de vérité = Redis)
+-- Table provider_states  (source de vérité — Redis a été retiré de l'architecture)
 -- ═══════════════════════════════════════════════════════════════════
 CREATE TABLE IF NOT EXISTS provider_states (
     provider           TEXT PRIMARY KEY,

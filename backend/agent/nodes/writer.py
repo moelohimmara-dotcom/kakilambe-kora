@@ -2,6 +2,9 @@
 NŒUD 3 — write_article
 Rédige un article complet via LiteLLM + validation Pydantic (ArticleKORA).
 Output JSON structuré : titre + chapeau + corps + SEO.
+Identité éditoriale KORA : neutre, factuel, structure BBC Afrique / New York Times.
+La catégorie WordPress est résolue de façon déterministe en Python (cf. _resolve_category_id),
+pas devinée par le LLM — évite une mauvaise catégorisation sur le site live.
 """
 import json
 from agent.state import KoraState
@@ -10,36 +13,69 @@ from core.llm_router import llm_router
 from core.logger import logger
 
 _WRITE_PROMPT = """Tu es KORA, journaliste IA expert de kakilambe.com, site d'actualité guinéen.
-Style : BBC News Afrique / France 24. Neutre, factuel, accessible. Langue : FRANÇAIS.
+Style éditorial : BBC News Afrique / New York Times. Neutre, factuel, accessible. Langue : FRANÇAIS.
+Tu n'as aucune ligne politique — tu ne favorises ni ne défavorises un parti, un gouvernement ou un acteur.
 
 SOURCE(S) À TRAITER :
 {sources_section}
 
 Rédige un article complet pour kakilambe.com.
 
-RÈGLES ABSOLUES :
-- Titre accrocheur (formule QUESTION / CITATION / CHIFFRE / CONTRASTE)
-- Chapeau (lead) : 2-3 phrases résumant l'essentiel, ton neutre
-- Corps : 4 à 5 paragraphes, 600-900 mots, style journalistique
-- Si plusieurs sources : croise les informations, enrichis l'angle, ne répète pas
-- Pas de plagiat : reformule, contextualise, ajoute de la valeur
-- Perspective guinéenne / africaine quand possible
-- Méta-description SEO : max 155 caractères
-- ANTI-HALLUCINATION : ne cite que des faits présents dans les sources fournies
+RÈGLES STRUCTURELLES STRICTES :
+1. TITRE : maximum 70 caractères. Formule QUESTION directe, CITATION choc, CHIFFRE clé ou CONTRASTE.
+   Contient toujours un repère géographique (Guinée, Conakry, ville, région...).
+2. CHAPEAU : 2 à 4 phrases d'accroche (style NYT). Plonge dans une scène, expose une tension ou
+   frappe avec un chiffre — ne résume pas l'article, donne envie de le lire.
+3. CORPS EN STRATES (6 paragraphes maximum) :
+   - Faits bruts (qui, quoi, où, quand)
+   - Le pourquoi / comment
+   - Citations directes ("a déclaré", "a affirmé", uniquement si présentes dans les sources)
+   - Contexte historique ou factuel
+   - Enjeux et conséquences, chiffrés si possible
+   - Perspective ouverte, sans opinion ni jugement personnel
+4. SOUS-TITRES : insère un sous-titre clair (format Markdown ##) environ tous les 150 mots.
+5. Si plusieurs sources : croise les informations, enrichis l'angle, ne répète pas.
+6. Pas de plagiat : reformule, contextualise, ajoute de la valeur.
+
+INTERDITS ABSOLUS :
+- Adjectifs non factuels ("magnifique", "terrible", "courageux"...)
+- Expressions floues ("beaucoup de personnes", "de nombreux observateurs")
+- Voix passive excessive, répétitions
+- Toute affirmation sans source dans le matériel fourni
+- ANTI-HALLUCINATION : ne cite que des faits présents dans les sources fournies. N'invente jamais.
+
+CATÉGORIE : choisis exactement un libellé parmi
+["Politique", "Économie", "Société", "Sport", "Culture", "Sécurité", "International"].
 
 Réponds UNIQUEMENT en JSON valide, format exact :
 {{
   "titre": "...",
   "chapeau": "...",
   "corps": "...",
-  "meta_description": "...",
+  "meta_description": "... (max 155 caractères)",
   "mots_cles": ["mot1", "mot2", "mot3", "mot4", "mot5"],
-  "categorie_wp_id": 1,
+  "categorie_label": "Politique",
   "source_url": "{url_principale}",
   "source_nom": "{source_nom}",
-  "image_prompt": "Detailed prompt for AI image generation describing the article scene"
+  "image_prompt": "Photorealistic wide-angle editorial photograph of... (en anglais, descriptif, sans texte ni logo)"
 }}
 """
+
+# ── Résolution déterministe de la catégorie WordPress ────────────────────────
+# IDs confirmés : Politique=4, Économie=5. Les autres libellés retombent sur le
+# défaut (44) tant que leurs IDs réels ne sont pas communiqués — mieux vaut une
+# catégorie par défaut correcte qu'un ID halluciné sur le site live.
+_CATEGORY_MAP = {
+    "politique": 4,
+    "economie":  5,
+}
+_DEFAULT_CATEGORY_ID = 44
+_ACCENT_MAP = str.maketrans("àâäéèêëîïôöùûüç", "aaaeeeeiioouuuc")
+
+
+def _resolve_category_id(label: str) -> int:
+    normalized = (label or "").strip().lower().translate(_ACCENT_MAP)
+    return _CATEGORY_MAP.get(normalized, _DEFAULT_CATEGORY_ID)
 
 def _build_sources_section(article: dict) -> tuple[str, str, str]:
     """Retourne (sources_section, url_principale, source_nom)."""
@@ -94,14 +130,14 @@ async def _write_with_retry(article: dict) -> ArticleKORA:
             raw = response.choices[0].message.content
             data = json.loads(raw)
 
-            # Validation Pydantic
+            # Validation Pydantic — catégorie résolue en Python, jamais devinée par le LLM
             article_obj = ArticleKORA(
-                titre=data.get("titre", titre),
+                titre=data.get("titre", titre)[:70],
                 chapeau=data.get("chapeau", ""),
                 corps=data.get("corps", ""),
                 meta_description=data.get("meta_description", "")[:155],
                 mots_cles=data.get("mots_cles", [])[:5],
-                categorie_wp_id=int(data.get("categorie_wp_id", 1)),
+                categorie_wp_id=_resolve_category_id(data.get("categorie_label", "")),
                 source_url=url,
                 source_nom=source_nom,
                 image_prompt=data.get("image_prompt", f"Journalistic photo for article: {titre}"),

@@ -65,7 +65,6 @@ class Settings(BaseSettings):
     ADMIN_EMAIL: str = "mistermarcket@gmail.com"
     GMAIL_USER: str = ""
     GMAIL_APP_PASSWORD: str = ""
-    GMAIL_RECIPIENT: str = "mistermarcket@gmail.com"
 
     class Config:
         env_file = ".env"
