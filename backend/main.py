@@ -2,9 +2,18 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import logging
 import time
 
 from core.config import settings
+
+# Filtre uvicorn : supprime le bruit des sondes non authentifiées sur /api/auth/me
+class _AuthMeFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not ("GET /api/auth/me" in msg and "401" in msg)
+
+logging.getLogger("uvicorn.access").addFilter(_AuthMeFilter())
 from core.scheduler import start_scheduler, scheduler
 from api.agent_routes import router as agent_router
 from api.auth_routes import router as auth_router

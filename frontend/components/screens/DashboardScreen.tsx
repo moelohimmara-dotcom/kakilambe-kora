@@ -34,10 +34,10 @@ export function DashboardScreen() {
 
   const { data, loading, refetch } = useAsync(fetchDashboard)
 
-  // Refresh toutes les 30s si un cycle tourne
+  // Refresh actif pendant un cycle, sinon toutes les 60s
   useInterval(
     refetch,
-    data?.cycle?.status === 'RUNNING' || data?.cycle?.status === 'PAUSED' ? 10000 : 30000,
+    data?.cycle?.status === 'RUNNING' || data?.cycle?.status === 'PAUSED' ? 10000 : 60000,
   )
 
   const pending = data?.pending ?? []
