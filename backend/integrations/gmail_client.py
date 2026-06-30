@@ -31,7 +31,10 @@ class GmailClient:
         msg.attach(MIMEText(body_html, "html", "utf-8"))
 
         try:
-            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as smtp:
+            with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as smtp:
+                smtp.ehlo()
+                smtp.starttls()
+                smtp.ehlo()
                 smtp.login(user, app_pw)
                 smtp.sendmail(user, recipient, msg.as_bytes())
             logger.info("gmail_sent", to=recipient, subject=subject)
