@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     # ── Security ─────────────────────────────────────────────────────────────
     API_SECRET_KEY: str = ""
     ADMIN_SECRET_KEY: str = ""
+    ADMIN_EMAIL: str = "mistermarcket@gmail.com"
 
     class Config:
         env_file = ".env"
