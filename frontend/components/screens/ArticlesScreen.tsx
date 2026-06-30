@@ -1,7 +1,9 @@
 'use client'
 
 import { useState, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -22,6 +24,7 @@ const STATUS_TABS: { label: string; value: ArticleStatus | '' }[] = [
 ]
 
 export function ArticlesScreen() {
+  const router = useRouter()
   const [activeStatus, setActiveStatus] = useState<ArticleStatus | ''>('')
   const [evaporating, setEvaporating] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
@@ -61,6 +64,7 @@ export function ArticlesScreen() {
     await refetch()
     setEvaporating(null)
     show('Article supprimé définitivement', 'warning')
+    router.refresh()
   })
 
   return (
@@ -241,10 +245,11 @@ function ArticleCard({
         )}
         <button
           onClick={onDelete}
-          className="font-heading text-[11px] text-gray-med hover:text-danger transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger rounded"
+          title="Supprimer"
+          className="p-1.5 text-gray-med hover:text-danger transition-colors rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger"
           aria-label={`Supprimer : ${article.titre}`}
         >
-          Supprimer
+          <Trash2 size={18} aria-hidden="true" />
         </button>
       </div>
     </Card>
