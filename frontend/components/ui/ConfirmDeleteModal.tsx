@@ -18,14 +18,14 @@ export function ConfirmDeleteModal({
   onConfirm,
   loading = false,
   title = 'Supprimer cet article ?',
-  description = 'Cette action est irréversible. L\'article sera définitivement effacé de la base de données.',
+  description = "Cette action est irréversible. L'article sera définitivement effacé de la base de données.",
 }: ConfirmDeleteModalProps) {
   const cancelRef = useRef<HTMLButtonElement>(null)
 
-  // Focus cancel button on open (évite suppression accidentelle)
+  // Focus cancel button dès l'ouverture
   useEffect(() => {
     if (open) {
-      const t = setTimeout(() => cancelRef.current?.focus(), 50)
+      const t = setTimeout(() => cancelRef.current?.focus(), 60)
       return () => clearTimeout(t)
     }
   }, [open])
@@ -33,152 +33,91 @@ export function ConfirmDeleteModal({
   // Fermeture sur Escape
   useEffect(() => {
     if (!open) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !loading) onClose() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open, onClose, loading])
 
-  // Bloquer le scroll du body
+  // Bloquer scroll body
   useEffect(() => {
-    if (open) document.body.style.overflow = 'hidden'
-    else document.body.style.overflow = ''
+    document.body.style.overflow = open ? 'hidden' : ''
     return () => { document.body.style.overflow = '' }
   }, [open])
 
   if (!open) return null
 
   return (
-    /* Overlay */
     <div
-      className="fixed inset-0 z-50 bg-anthracite/40 backdrop-blur-sm flex items-end md:items-center justify-center"
-      onClick={onClose}
-      aria-modal="true"
       role="dialog"
+      aria-modal="true"
       aria-labelledby="cdm-title"
       aria-describedby="cdm-desc"
+      className="fixed inset-0 z-[9999] flex items-end md:items-center justify-center"
     >
-      {/* Conteneur — bottom sheet sur mobile, carte centrée sur desktop */}
+      {/* Overlay */}
       <div
-        className={[
-          'bg-white w-full md:max-w-md md:rounded-[24px] shadow-2xl',
-          'rounded-t-[24px] md:rounded-[24px]',
-          /* animation */
-          'hidden md:block modal-scale-in',
-        ].join(' ')}
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Version desktop */}
-        <ModalContent
-          title={title}
-          description={description}
-          loading={loading}
-          onClose={onClose}
-          onConfirm={onConfirm}
-          cancelRef={cancelRef}
-          stackButtons={false}
-        />
-      </div>
+        className="absolute inset-0 bg-anthracite/40 backdrop-blur-sm"
+        onClick={() => !loading && onClose()}
+      />
 
-      {/* Bottom sheet — mobile uniquement */}
-      <div
-        className={[
-          'bg-white w-full rounded-t-[24px] shadow-2xl',
-          'block md:hidden sheet-slide-up',
-        ].join(' ')}
-        onClick={e => e.stopPropagation()}
-      >
-        <ModalContent
-          title={title}
-          description={description}
-          loading={loading}
-          onClose={onClose}
-          onConfirm={onConfirm}
-          cancelRef={cancelRef}
-          stackButtons={true}
-        />
-      </div>
-    </div>
-  )
-}
+      {/* Boîte modale — bottom sheet mobile, carte centrée desktop */}
+      <div className="relative w-full md:max-w-md bg-white shadow-2xl rounded-t-[24px] md:rounded-[24px] p-6 md:p-8 modal-scale-in">
+        {/* Icône danger */}
+        <div className="w-12 h-12 rounded-full bg-danger/10 flex items-center justify-center mb-5 mx-auto md:mx-0">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+            <path
+              d="M11 7v5M11 15h.01M21 11a10 10 0 1 1-20 0 10 10 0 0 1 20 0Z"
+              stroke="#c0392b"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+            />
+          </svg>
+        </div>
 
-function ModalContent({
-  title,
-  description,
-  loading,
-  onClose,
-  onConfirm,
-  cancelRef,
-  stackButtons,
-}: {
-  title: string
-  description: string
-  loading: boolean
-  onClose: () => void
-  onConfirm: () => void
-  cancelRef: React.RefObject<HTMLButtonElement>
-  stackButtons: boolean
-}) {
-  return (
-    <div className="p-6 md:p-8">
-      {/* Icône danger */}
-      <div className="w-12 h-12 rounded-full bg-danger/10 flex items-center justify-center mb-5 mx-auto md:mx-0">
-        <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
-          <path d="M11 7v5M11 15h.01M21 11a10 10 0 1 1-20 0 10 10 0 0 1 20 0Z"
-            stroke="#c0392b" strokeWidth="1.8" strokeLinecap="round"/>
-        </svg>
-      </div>
+        <h2 id="cdm-title" className="font-heading font-bold text-[18px] text-anthracite mb-2 text-center md:text-left">
+          {title}
+        </h2>
+        <p id="cdm-desc" className="font-body text-[14px] text-gray-dk leading-relaxed mb-6 text-center md:text-left">
+          {description}
+        </p>
 
-      <h2 id="cdm-title" className="font-heading font-bold text-[18px] text-anthracite mb-2 text-center md:text-left">
-        {title}
-      </h2>
-      <p id="cdm-desc" className="font-body text-[14px] text-gray-dk leading-relaxed mb-6 text-center md:text-left">
-        {description}
-      </p>
+        {/* Boutons — empilés mobile, côte à côte desktop */}
+        <div className="flex flex-col-reverse md:flex-row md:justify-end gap-3">
+          {/* Annuler */}
+          <button
+            ref={cancelRef}
+            onClick={onClose}
+            disabled={loading}
+            className="min-h-[48px] px-6 rounded-xl font-heading font-semibold text-[14px]
+              bg-transparent text-gray-dk border border-gray-light
+              hover:bg-gray-pale transition-all active:scale-[.98]
+              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange focus-visible:ring-offset-2
+              disabled:opacity-40 disabled:pointer-events-none flex items-center justify-center"
+          >
+            Annuler
+          </button>
 
-      {/* Boutons */}
-      <div className={`flex gap-3 ${stackButtons ? 'flex-col' : 'flex-row justify-end'}`}>
-        {/* Supprimer — en haut sur mobile, à droite sur desktop */}
-        <button
-          onClick={onConfirm}
-          disabled={loading}
-          className={[
-            'min-h-[48px] px-6 rounded-xl font-heading font-semibold text-[14px]',
-            'bg-danger text-white transition-all',
-            'hover:bg-[#a93226] active:scale-[.98]',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger focus-visible:ring-offset-2',
-            'disabled:opacity-50 disabled:pointer-events-none',
-            'flex items-center justify-center gap-2',
-            stackButtons ? 'order-1 w-full' : 'order-2',
-          ].join(' ')}
-          aria-label="Confirmer la suppression"
-        >
-          {loading ? (
-            <>
-              <Spinner size="sm" />
-              <span>Suppression…</span>
-            </>
-          ) : (
-            'Supprimer définitivement'
-          )}
-        </button>
-
-        {/* Annuler — en bas sur mobile, à gauche sur desktop */}
-        <button
-          ref={cancelRef}
-          onClick={onClose}
-          disabled={loading}
-          className={[
-            'min-h-[48px] px-6 rounded-xl font-heading font-semibold text-[14px]',
-            'bg-transparent text-gray-dk border border-gray-light',
-            'hover:bg-gray-pale transition-all active:scale-[.98]',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange focus-visible:ring-offset-2',
-            'disabled:opacity-50 disabled:pointer-events-none',
-            'flex items-center justify-center',
-            stackButtons ? 'order-2 w-full' : 'order-1',
-          ].join(' ')}
-        >
-          Annuler
-        </button>
+          {/* Supprimer */}
+          <button
+            onClick={onConfirm}
+            disabled={loading}
+            className="min-h-[48px] px-6 rounded-xl font-heading font-semibold text-[14px]
+              bg-danger text-white
+              hover:bg-[#a93226] active:scale-[.98] transition-all
+              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger focus-visible:ring-offset-2
+              disabled:opacity-40 disabled:pointer-events-none flex items-center justify-center gap-2"
+            aria-label="Confirmer la suppression"
+          >
+            {loading ? (
+              <>
+                <Spinner size="sm" />
+                <span>Suppression…</span>
+              </>
+            ) : (
+              'Supprimer définitivement'
+            )}
+          </button>
+        </div>
       </div>
     </div>
   )
