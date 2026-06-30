@@ -428,6 +428,18 @@ body {
   pointer-events: none;
 }
 
+/* ── ConfirmDeleteModal ───────────────────────────────────────────── */
+@keyframes modalScaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes sheetSlideUp {
+  from { opacity: 0; transform: translateY(100%); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.modal-scale-in  { animation: modalScaleIn  200ms ease-out forwards; }
+.sheet-slide-up  { animation: sheetSlideUp  220ms ease-out forwards; }
+
 /* ── Skeleton loader ─────────────────────────────────────────────── */
 @keyframes shimmer {
   0%   { background-position: -400px 0; }

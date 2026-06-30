@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
+import { ConfirmDeleteModal } from '@/components/ui/ConfirmDeleteModal'
 import { useAsync, useMutation } from '@/lib/hooks'
 import { useToast } from '@/lib/contexts/ToastContext'
 import { articleApi } from '@/lib/api'
@@ -23,6 +24,7 @@ const STATUS_TABS: { label: string; value: ArticleStatus | '' }[] = [
 export function ArticlesScreen() {
   const [activeStatus, setActiveStatus] = useState<ArticleStatus | ''>('')
   const [evaporating, setEvaporating] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const { show } = useToast()
 
   const fetchArticles = useCallback(
@@ -49,6 +51,16 @@ export function ArticlesScreen() {
     await refetch()
     setEvaporating(null)
     show('Article rejeté', 'warning')
+  })
+
+  const { mutate: deleteArticle, loading: deleting } = useMutation(async (id: string) => {
+    setEvaporating(id)
+    await new Promise(r => setTimeout(r, 480))
+    await articleApi.delete(id)
+    setDeleteTarget(null)
+    await refetch()
+    setEvaporating(null)
+    show('Article supprimé définitivement', 'warning')
   })
 
   return (
@@ -104,6 +116,7 @@ export function ArticlesScreen() {
                 article={article}
                 onApprove={() => approve(article.id)}
                 onReject={() => reject(article.id)}
+                onDelete={() => setDeleteTarget(article.id)}
                 approving={approving && evaporating === article.id}
               />
             </div>
@@ -111,6 +124,13 @@ export function ArticlesScreen() {
         </div>
       )}
       </div>
+
+      <ConfirmDeleteModal
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => deleteTarget && deleteArticle(deleteTarget)}
+        loading={deleting}
+      />
     </div>
   )
 }
@@ -118,11 +138,12 @@ export function ArticlesScreen() {
 // ── Article Card ─────────────────────────────────────────────────────────────
 
 function ArticleCard({
-  article, onApprove, onReject, approving,
+  article, onApprove, onReject, onDelete, approving,
 }: {
   article: Article
   onApprove: () => void
   onReject: () => void
+  onDelete: () => void
   approving: boolean
 }) {
   return (
@@ -206,9 +227,9 @@ function ArticleCard({
         </div>
       )}
 
-      {/* Link WP */}
-      {article.status === 'PUBLISHED' && article.wp_url && (
-        <div className="shrink-0 self-start">
+      {/* Lien WP + Supprimer */}
+      <div className="shrink-0 self-start flex flex-col items-end gap-2">
+        {article.status === 'PUBLISHED' && article.wp_url && (
           <a
             href={article.wp_url}
             target="_blank"
@@ -217,8 +238,15 @@ function ArticleCard({
           >
             Voir sur WP ↗
           </a>
-        </div>
-      )}
+        )}
+        <button
+          onClick={onDelete}
+          className="font-heading text-[11px] text-gray-med hover:text-danger transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger rounded"
+          aria-label={`Supprimer : ${article.titre}`}
+        >
+          Supprimer
+        </button>
+      </div>
     </Card>
   )
 }
