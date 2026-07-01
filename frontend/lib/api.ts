@@ -86,6 +86,15 @@ export const chatApi = {
     request<{ session: import('./types').ChatSession; messages: import('./types').ChatMessage[] }>(
       `/api/chat/sessions/${id}`
     ),
+  createSession: () =>
+    request<import('./types').ChatSession>('/api/chat/sessions', { method: 'POST' }),
+  updateSession: (id: string, data: Partial<Pick<import('./types').ChatSession, 'title' | 'is_pinned' | 'status'>>) =>
+    request<import('./types').ChatSession>(`/api/chat/sessions/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  deleteSession: (id: string) =>
+    request<void>(`/api/chat/sessions/${id}`, { method: 'DELETE' }),
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────

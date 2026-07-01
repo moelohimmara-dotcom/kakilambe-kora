@@ -1,9 +1,11 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { Menu, X } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Spinner } from '@/components/ui/Spinner'
+import { SessionSidebar } from '@/components/chat/SessionSidebar'
 import { useToast } from '@/lib/contexts/ToastContext'
 import { chatApi, BASE_URL } from '@/lib/api'
 
@@ -16,8 +18,10 @@ interface Message {
 export function ChatScreen() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
-  const [sessionId] = useState(() => Math.random().toString(36).slice(2))
+  const [sessionId, setSessionId] = useState<string | null>(null)
   const [streaming, setStreaming] = useState(false)
+  const [sidebarRefresh, setSidebarRefresh] = useState(0)
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const { show } = useToast()
@@ -33,6 +37,23 @@ export function ChatScreen() {
     el.style.height = Math.min(el.scrollHeight, 200) + 'px'
   }
 
+  function startNewConversation() {
+    setSessionId(null)
+    setMessages([])
+    setMobileSidebarOpen(false)
+  }
+
+  async function selectSession(id: string) {
+    try {
+      const { session, messages: history } = await chatApi.session(id)
+      setSessionId(session.id)
+      setMessages(history.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })))
+      setMobileSidebarOpen(false)
+    } catch {
+      show('Impossible de charger cette conversation', 'error')
+    }
+  }
+
   async function sendMessage() {
     const text = input.trim()
     if (!text || streaming) return
@@ -45,7 +66,22 @@ export function ChatScreen() {
     setMessages(prev => [...prev, userMsg, assistantMsg])
     setStreaming(true)
 
-    const url = chatApi.streamUrl(sessionId, text)
+    // Session créée en base au premier message — pas au chargement de page
+    // (évite de polluer la sidebar de conversations vides jamais utilisées).
+    let activeSessionId = sessionId
+    if (!activeSessionId) {
+      try {
+        const created = await chatApi.createSession()
+        activeSessionId = created.id
+        setSessionId(created.id)
+      } catch {
+        show('Impossible de créer la conversation', 'error')
+        setStreaming(false)
+        return
+      }
+    }
+
+    const url = chatApi.streamUrl(activeSessionId, text)
     const es = new EventSource(url)
     let accumulated = ''
 
@@ -58,6 +94,7 @@ export function ChatScreen() {
             i === prev.length - 1 ? { ...m, streaming: false, content: accumulated } : m
           )
         )
+        setSidebarRefresh(k => k + 1)
         return
       }
       try {
@@ -93,11 +130,52 @@ export function ChatScreen() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-64px)] md:h-[calc(100vh-64px)]">
+    <div className="flex h-[calc(100vh-64px)] relative">
+      {/* Sidebar desktop */}
+      <aside className="hidden md:block w-64 shrink-0 border-r border-gray-light bg-gray-pale/30">
+        <SessionSidebar
+          activeSessionId={sessionId}
+          onSelect={selectSession}
+          onNewConversation={startNewConversation}
+          refreshKey={sidebarRefresh}
+        />
+      </aside>
+
+      {/* Sidebar mobile (drawer) */}
+      {mobileSidebarOpen && (
+        <div className="md:hidden fixed inset-0 z-40 flex">
+          <div className="absolute inset-0 bg-anthracite/40" onClick={() => setMobileSidebarOpen(false)} />
+          <aside className="relative w-72 max-w-[80vw] bg-white h-full shadow-2xl">
+            <div className="flex items-center justify-between px-3 py-3 border-b border-gray-light">
+              <span className="font-heading font-semibold text-[13px] text-anthracite">Conversations</span>
+              <button onClick={() => setMobileSidebarOpen(false)} aria-label="Fermer" className="p-1 text-gray-med">
+                <X size={18} />
+              </button>
+            </div>
+            <SessionSidebar
+              activeSessionId={sessionId}
+              onSelect={selectSession}
+              onNewConversation={startNewConversation}
+              refreshKey={sidebarRefresh}
+            />
+          </aside>
+        </div>
+      )}
+
+      <div className="flex flex-col flex-1 min-w-0">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-gray-light shrink-0">
-        <h1 className="font-heading font-bold text-xl text-anthracite">Chat IA</h1>
-        <p className="font-heading text-[12px] text-gray-dk">Assistant journalistique KORA</p>
+      <div className="px-6 py-4 border-b border-gray-light shrink-0 flex items-center gap-3">
+        <button
+          onClick={() => setMobileSidebarOpen(true)}
+          className="md:hidden p-1.5 text-gray-dk hover:text-anthracite transition-colors"
+          aria-label="Ouvrir l'historique des conversations"
+        >
+          <Menu size={20} />
+        </button>
+        <div>
+          <h1 className="font-heading font-bold text-xl text-anthracite">Chat IA</h1>
+          <p className="font-heading text-[12px] text-gray-dk">Assistant journalistique KORA</p>
+        </div>
       </div>
 
       {/* Messages */}
@@ -162,6 +240,7 @@ export function ChatScreen() {
             {streaming ? <Spinner size="sm" /> : 'Envoyer'}
           </Button>
         </div>
+      </div>
       </div>
     </div>
   )

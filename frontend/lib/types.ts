@@ -60,9 +60,12 @@ export interface ChatMessage {
 
 export interface ChatSession {
   id: string
-  title?: string
+  title?: string | null
+  is_pinned: boolean
+  status: 'active' | 'archived'
   message_count: number
   created_at: string
+  updated_at: string
 }
 
 export interface RSSSource {
