@@ -17,7 +17,11 @@ PROVIDER_CONFIG = {
     "groq": {
         "primary_model": "groq/llama-3.3-70b-versatile",
         "fallback_model": "groq/llama-3.1-8b-instant",
-        "daily_token_limit": 500_000,
+        # Limite réelle du compte Groq observée en production (erreur 429 :
+        # "Limit 100000 ... on tokens per day (TPD)") — 500_000 était une valeur
+        # inventée, jamais atteinte, qui empêchait la bascule proactive avant
+        # que Groq ne renvoie lui-même l'erreur.
+        "daily_token_limit": 100_000,
         "rpm_limit": 30,
         "api_key_env": "GROQ_API_KEY",
     },
@@ -40,13 +44,6 @@ PROVIDER_CONFIG = {
         "api_key_env": "OPENROUTER_API_KEY",
     },
 }
-
-FALLBACK_CHAIN = [
-    PROVIDER_CONFIG["groq"]["primary_model"],
-    PROVIDER_CONFIG["gemini"]["primary_model"],
-    PROVIDER_CONFIG["cerebras"]["primary_model"],
-    PROVIDER_CONFIG["openrouter"]["primary_model"],
-]
 
 PROVIDER_ORDER = ["groq", "gemini", "cerebras", "openrouter"]
 
@@ -198,7 +195,80 @@ class KoraLLMRouter:
 
         return None
 
-    # ── LLM completion with automatic fallback ───────────────────────────────
+    def _attempt_order(self) -> list[str]:
+        """
+        Ordre d'essai pour un appel complet : le meilleur candidat actif d'abord
+        (get_active_provider, qui saute déjà les providers RATE_LIMITED/OFFLINE
+        dont la fenêtre n'est pas expirée), puis tous les autres providers en
+        secours, y compris ceux marqués indisponibles — un état en cache peut
+        être périmé, et un essai raté est peu coûteux face au risque de laisser
+        l'utilisateur sans réponse du tout.
+        """
+        order = []
+        active = self.get_active_provider()
+        if active:
+            order.append(active)
+        for p in PROVIDER_ORDER:
+            if p not in order:
+                order.append(p)
+        return order
+
+    # ── Marquage d'état par type d'échec ─────────────────────────────────────
+
+    async def _mark_rate_limited(self, provider: str):
+        state = self.get_provider_state(provider)
+        state["status"] = "RATE_LIMITED"
+        state["rate_limited_until"] = (datetime.utcnow() + timedelta(seconds=60)).isoformat()
+        self.set_provider_state(provider, state)
+        await self.persist_to_db(provider, state)
+        logger.warning("rate_limited", provider=provider)
+
+    async def _mark_exhausted(self, provider: str, error: Exception):
+        state = self.get_provider_state(provider)
+        state["status"] = "EXHAUSTED"
+        state["last_error"] = str(error)[:200]
+        self.set_provider_state(provider, state)
+        await self.persist_to_db(provider, state)
+        logger.error("llm_model_not_found", provider=provider, error=str(error)[:200])
+
+    async def _mark_offline(self, provider: str, error: Exception):
+        state = self.get_provider_state(provider)
+        state["status"] = "OFFLINE"
+        state["rate_limited_until"] = (datetime.utcnow() + timedelta(minutes=5)).isoformat()
+        state["last_error"] = str(error)[:200]
+        self.set_provider_state(provider, state)
+        await self.persist_to_db(provider, state)
+        logger.error("llm_error", provider=provider, error=str(error)[:200])
+
+    async def _mark_success(self, provider: str, usage=None):
+        state = self.get_provider_state(provider)
+        if usage:
+            state["tokens_used_today"] += getattr(usage, "total_tokens", 0)
+        state["requests_today"] += 1
+        self.set_provider_state(provider, state)
+        await self.persist_to_db(provider, state)
+
+    async def _handle_failure(self, provider: str, error: Exception):
+        """Marque l'état du provider en échec et retourne True si on doit tenter le suivant."""
+        if isinstance(error, litellm.RateLimitError):
+            await self._mark_rate_limited(provider)
+            return True
+        if isinstance(error, litellm.NotFoundError):
+            await self._mark_exhausted(provider, error)
+            return True
+        if isinstance(error, litellm.ContextWindowExceededError):
+            # Pas un problème de provider — un autre modèle ne résoudra rien
+            # de façon fiable pour la même conversation trop longue.
+            logger.warning("context_exceeded", provider=provider)
+            return False
+        await self._mark_offline(provider, error)
+        return True
+
+    # ── LLM completion avec bascule explicite entre providers ────────────────
+    # litellm.acompletion(fallbacks=[...]) s'est montré non fiable en streaming
+    # (l'erreur 429 surgit lors de la CONSOMMATION du générateur, pas au moment
+    # du `await`, donc le fallback interne de litellm ne se déclenche jamais) —
+    # remplacé par une boucle Python explicite, testable et déterministe.
 
     async def complete(
         self,
@@ -210,84 +280,89 @@ class KoraLLMRouter:
         tools: Optional[list] = None,
         tool_choice=None,
     ):
-        active = self.get_active_provider()
-        if not active:
+        self._set_litellm_keys()
+        providers = self._attempt_order()
+        if not providers:
             raise RuntimeError("All LLM providers exhausted or offline")
 
-        primary_model = PROVIDER_CONFIG[active]["primary_model"]
-        fallbacks = [m for m in FALLBACK_CHAIN if m != primary_model]
+        if stream:
+            return self._stream_with_fallback(
+                providers, messages, temperature, max_tokens, response_format, tools, tool_choice
+            )
+        return await self._complete_with_fallback(
+            providers, messages, temperature, max_tokens, response_format, tools, tool_choice
+        )
 
+    def _build_params(self, provider: str, messages, temperature, max_tokens, stream, response_format, tools, tool_choice) -> dict:
         params = {
-            "model": primary_model,
+            "model": PROVIDER_CONFIG[provider]["primary_model"],
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": stream,
-            "fallbacks": fallbacks,
-            "num_retries": 2,
         }
         if response_format:
             params["response_format"] = response_format
         if tools:
             params["tools"] = tools
             params["tool_choice"] = tool_choice or "auto"
+        return params
 
-        self._set_litellm_keys()
+    async def _complete_with_fallback(
+        self, providers: list[str], messages, temperature, max_tokens, response_format, tools, tool_choice
+    ):
+        last_err = None
+        for provider in providers:
+            params = self._build_params(provider, messages, temperature, max_tokens, False, response_format, tools, tool_choice)
+            try:
+                response = await litellm.acompletion(**params)
+                await self._mark_success(provider, getattr(response, "usage", None))
+                logger.info(
+                    "llm_success", provider=provider, model=params["model"],
+                    tokens=getattr(getattr(response, "usage", None), "total_tokens", 0),
+                )
+                return response
+            except Exception as e:
+                last_err = e
+                should_continue = await self._handle_failure(provider, e)
+                if not should_continue:
+                    raise
+        raise RuntimeError(f"All LLM providers failed. Dernière erreur ({providers[-1]}): {last_err}")
 
-        try:
-            response = await litellm.acompletion(**params)
+    async def _stream_with_fallback(
+        self, providers: list[str], messages, temperature, max_tokens, response_format, tools, tool_choice
+    ):
+        """
+        Générateur async : tente chaque provider, valide en tirant le PREMIER
+        chunk avant de s'engager (c'est à ce moment que les erreurs HTTP comme
+        un 429 remontent réellement pour un appel streamé côté litellm) — si ça
+        échoue, passe au provider suivant de façon invisible pour l'appelant.
+        """
+        last_err = None
+        for provider in providers:
+            params = self._build_params(provider, messages, temperature, max_tokens, True, response_format, tools, tool_choice)
+            try:
+                response = await litellm.acompletion(**params)
+                stream_iter = response.__aiter__()
+                first_chunk = await stream_iter.__anext__()
+            except StopAsyncIteration:
+                await self._mark_success(provider)
+                return
+            except Exception as e:
+                last_err = e
+                should_continue = await self._handle_failure(provider, e)
+                if not should_continue:
+                    raise
+                continue
 
-            state = self.get_provider_state(active)
-            if hasattr(response, "usage") and response.usage:
-                state["tokens_used_today"] += response.usage.total_tokens
-                state["requests_today"] += 1
-            self.set_provider_state(active, state)
-            await self.persist_to_db(active, state)
+            await self._mark_success(provider)
+            logger.info("llm_success", provider=provider, model=params["model"], streaming=True)
+            yield first_chunk
+            async for chunk in stream_iter:
+                yield chunk
+            return
 
-            logger.info(
-                "llm_success",
-                provider=active,
-                model=primary_model,
-                tokens=getattr(getattr(response, "usage", None), "total_tokens", 0),
-            )
-            return response
-
-        except litellm.RateLimitError:
-            state = self.get_provider_state(active)
-            state["status"] = "RATE_LIMITED"
-            state["rate_limited_until"] = (
-                datetime.utcnow() + timedelta(seconds=60)
-            ).isoformat()
-            self.set_provider_state(active, state)
-            await self.persist_to_db(active, state)
-            logger.warning("rate_limited", provider=active)
-            raise
-
-        except litellm.ContextWindowExceededError:
-            logger.warning("context_exceeded", provider=active)
-            raise
-
-        except litellm.NotFoundError as e:
-            # 404 modèle invalide → EXHAUSTED (permanent, pas de retry)
-            state = self.get_provider_state(active)
-            state["status"] = "EXHAUSTED"
-            state["last_error"] = str(e)[:200]
-            self.set_provider_state(active, state)
-            await self.persist_to_db(active, state)
-            logger.error("llm_model_not_found", provider=active, error=str(e)[:200])
-            raise
-
-        except Exception as e:
-            state = self.get_provider_state(active)
-            state["status"] = "OFFLINE"
-            state["rate_limited_until"] = (
-                datetime.utcnow() + timedelta(minutes=5)
-            ).isoformat()
-            state["last_error"] = str(e)[:200]
-            self.set_provider_state(active, state)
-            await self.persist_to_db(active, state)
-            logger.error("llm_error", provider=active, error=str(e)[:200])
-            raise
+        raise RuntimeError(f"All LLM providers failed (streaming). Dernière erreur ({providers[-1]}): {last_err}")
 
     def _set_litellm_keys(self):
         if settings.GROQ_API_KEY:
