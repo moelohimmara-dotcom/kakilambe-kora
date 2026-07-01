@@ -35,28 +35,10 @@ _DEFAULT_SYSTEM_PROMPT = (
 )
 
 # ── Outil de recherche web (Tavily) — le chat n'avait aucun accès temps réel ──
-
-_WEB_SEARCH_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "search_web_for_news",
-        "description": (
-            "Recherche des actualités et informations récentes sur le web via Tavily. "
-            "À utiliser systématiquement pour toute question sur l'actualité guinéenne "
-            "ou tout sujet nécessitant des données postérieures à la date de connaissance du modèle."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Requête de recherche ciblée (ex: 'actualité Guinée Conakry juillet 2026').",
-                }
-            },
-            "required": ["query"],
-        },
-    },
-}
+# Déclenchement déterministe (voir _is_news_query/_run_tool_loop), pas de
+# function-calling LLM : les petits modèles du fallback chain (openrouter 8B)
+# ne le supportent pas de façon fiable, et l'aller-retour de décision doublait
+# la latence jusqu'au 504 Gateway Timeout sur DigitalOcean.
 
 
 async def _execute_tool_call(name: str, arguments: dict) -> str:
@@ -83,10 +65,9 @@ async def _execute_tool_call(name: str, arguments: dict) -> str:
 
 
 # ── Détection déterministe des questions d'actualité ─────────────────────────
-# "auto" laisse le LLM décider seul — peu fiable en pratique (variance run-to-run
-# observée sur groq/llama-3.3-70b). Pour les questions à mots-clés d'actualité
-# explicites, on force l'appel de l'outil plutôt que d'espérer que le modèle
-# le déclenche de lui-même.
+# Laisser le LLM "décider" (function-calling tool_choice="auto") s'est montré
+# peu fiable : variance run-to-run, confabulation, et un aller-retour LLM en
+# plus. Un simple filtre mots-clés déclenche la recherche de façon prévisible.
 _NEWS_TRIGGER_KEYWORDS = (
     "actualite", "actualites", "nouvelles", "derniere", "dernieres",
     "recent", "recente", "recentes", "aujourd'hui", "aujourdhui",
@@ -100,48 +81,33 @@ def _is_news_query(text_: str) -> bool:
     return any(kw in normalized for kw in _NEWS_TRIGGER_KEYWORDS)
 
 
-async def _run_tool_loop(messages: list, temperature: float, max_tokens: int, force: bool = False) -> tuple[list, bool]:
+async def _run_tool_loop(
+    messages: list, temperature: float, max_tokens: int, force: bool = False, query_hint: str = ""
+) -> tuple[list, bool]:
     """
-    Une passe de décision d'outil (non-stream). Retourne (messages_enrichis, tool_used).
-    `force=True` (question d'actualité détectée par mots-clés) impose l'appel de l'outil
-    plutôt que de laisser le modèle décider en mode "auto" — moins fiable en pratique.
-    Défensif : certains providers du fallback chain (gemini/cerebras/openrouter) peuvent
-    ne pas accepter le même format tools/tool_choice que groq. Toute erreur ici dégrade
-    proprement vers une réponse sans outil plutôt que de faire échouer le chat (500).
+    Retourne (messages_enrichis, tool_used).
+
+    `force=True` (mot-clé d'actualité détecté) : appelle Tavily DIRECTEMENT en Python,
+    sans solliciter le LLM pour "décider" — élimine un aller-retour LLM complet.
+    Une passe de décision LLM séparée doublait la latence (2 complétions par tour) et
+    provoquait des 504 Gateway Timeout sur DigitalOcean dès qu'un provider de repli
+    (fallback) plus lent que groq était utilisé. Le déclenchement déterministe est
+    aussi plus fiable que tool_choice="auto", qui montrait de la confabulation
+    (le modèle prétendait avoir cherché sans appeler l'outil).
+
+    `force=False` : pas de recherche — évite tout appel d'outil superflu pour les
+    questions non liées à l'actualité (écriture, reformulation, etc.).
     """
-    tool_choice = (
-        {"type": "function", "function": {"name": "search_web_for_news"}}
-        if force else "auto"
-    )
+    if not force:
+        return messages, False
+
     try:
-        decision = await llm_router.complete(
-            messages=messages,
-            temperature=temperature,
-            # La décision n'a besoin que d'émettre un appel d'outil, pas une réponse
-            # complète — plafonné bas pour ne pas payer la latence de max_tokens=2048
-            # deux fois dans le même aller-retour HTTP (contrainte gateway DO ~60s).
-            max_tokens=min(max_tokens, 150),
-            tools=[_WEB_SEARCH_TOOL],
-            tool_choice=tool_choice,
-        )
-        decision_msg = decision.choices[0].message
-        tool_calls = getattr(decision_msg, "tool_calls", None)
-
-        if not tool_calls:
-            return messages, False
-
-        logger.info("chat_tool_call_triggered", count=len(tool_calls))
-        enriched = list(messages) + [decision_msg.model_dump()]
-        for tc in tool_calls:
-            try:
-                args = json.loads(tc.function.arguments or "{}")
-            except (json.JSONDecodeError, AttributeError):
-                args = {}
-            result = await _execute_tool_call(tc.function.name, args)
-            enriched.append({"role": "tool", "tool_call_id": tc.id, "content": result})
-
+        result = await _execute_tool_call("search_web_for_news", {"query": query_hint})
+        logger.info("chat_tool_call_triggered", query=query_hint)
+        enriched = list(messages) + [
+            {"role": "system", "content": f"[Résultat de recherche web injecté automatiquement]\n{result}"}
+        ]
         return enriched, True
-
     except Exception as e:
         logger.warning("chat_tool_loop_failed", error=str(e))
         return messages, False
@@ -205,17 +171,17 @@ async def chat(body: ChatRequest):
 
     last_user_text = body.messages[-1].content if body.messages else ""
     messages, tool_used = await _run_tool_loop(
-        messages, body.temperature, body.max_tokens, force=_is_news_query(last_user_text)
+        messages, body.temperature, body.max_tokens,
+        force=_is_news_query(last_user_text), query_hint=last_user_text,
     )
 
     try:
-        # Certains providers (Groq notamment) exigent que `tools` reste déclaré
-        # tant que l'historique contient des messages role="tool" — sinon 400.
+        # Résultats Tavily déjà injectés comme message système par _run_tool_loop —
+        # un seul appel LLM ici, pas de binding tools/tool_choice nécessaire.
         response = await llm_router.complete(
             messages=messages,
             temperature=body.temperature,
             max_tokens=body.max_tokens,
-            tools=[_WEB_SEARCH_TOOL] if tool_used else None,
         )
         content = response.choices[0].message.content
     except Exception as e:
@@ -257,21 +223,18 @@ async def chat_stream(session_id: str, message: str, temperature: float = 0.7):
         ]
         accumulated = ""
         try:
-            # Phase 1 — décision d'outil (non-stream, léger). La réponse finale
-            # streamée en phase 2 inclut les résultats Tavily si l'outil a été appelé.
+            # Phase 1 — recherche Tavily déterministe (Python, pas de décision LLM
+            # séparée) si mot-clé d'actualité détecté. Un seul appel LLM streamé suit.
             messages, tool_used = await _run_tool_loop(
-                messages, temperature, max_tokens=400, force=_is_news_query(message)
+                messages, temperature, max_tokens=400, force=_is_news_query(message), query_hint=message
             )
             if tool_used:
                 yield f"data: {json.dumps({'event': 'tool_call', 'tool': 'search_web_for_news'})}\n\n"
 
-            # Certains providers exigent `tools` tant que l'historique contient
-            # des messages role="tool" — sinon rejet 400 (Groq notamment).
             response = await llm_router.complete(
                 messages=messages,
                 temperature=temperature,
                 stream=True,
-                tools=[_WEB_SEARCH_TOOL] if tool_used else None,
             )
             async for chunk in response:
                 delta = chunk.choices[0].delta
