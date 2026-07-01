@@ -169,12 +169,19 @@ async def chat(body: ChatRequest):
 
     messages, tool_used = await _run_tool_loop(messages, body.temperature, body.max_tokens)
 
-    response = await llm_router.complete(
-        messages=messages,
-        temperature=body.temperature,
-        max_tokens=body.max_tokens,
-    )
-    content = response.choices[0].message.content
+    try:
+        # Certains providers (Groq notamment) exigent que `tools` reste déclaré
+        # tant que l'historique contient des messages role="tool" — sinon 400.
+        response = await llm_router.complete(
+            messages=messages,
+            temperature=body.temperature,
+            max_tokens=body.max_tokens,
+            tools=[_WEB_SEARCH_TOOL] if tool_used else None,
+        )
+        content = response.choices[0].message.content
+    except Exception as e:
+        logger.error("chat_final_completion_failed", error=str(e), tool_used=tool_used)
+        raise HTTPException(status_code=502, detail="Le modèle n'a pas pu générer de réponse. Réessayez.")
 
     if body.session_id and body.messages:
         last_user = body.messages[-1].content
@@ -213,10 +220,13 @@ async def chat_stream(session_id: str, message: str, temperature: float = 0.7):
             if tool_used:
                 yield f"data: {json.dumps({'event': 'tool_call', 'tool': 'search_web_for_news'})}\n\n"
 
+            # Certains providers exigent `tools` tant que l'historique contient
+            # des messages role="tool" — sinon rejet 400 (Groq notamment).
             response = await llm_router.complete(
                 messages=messages,
                 temperature=temperature,
                 stream=True,
+                tools=[_WEB_SEARCH_TOOL] if tool_used else None,
             )
             async for chunk in response:
                 delta = chunk.choices[0].delta
