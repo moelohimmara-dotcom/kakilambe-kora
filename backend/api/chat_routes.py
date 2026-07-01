@@ -26,7 +26,12 @@ _DEFAULT_SYSTEM_PROMPT = (
     "pour toute question sur l'actualité, un événement récent, ou une "
     "information qui nécessite des données à jour (au-delà de ta date de "
     "connaissance). Ne dis jamais que tu n'as pas accès à des informations "
-    "en temps réel sans avoir d'abord appelé cet outil."
+    "en temps réel sans avoir d'abord appelé cet outil. "
+    "INTERDICTION ABSOLUE : ne prétends JAMAIS avoir utilisé un outil que tu "
+    "n'as pas réellement invoqué. Si aucun résultat de recherche web ne t'a "
+    "été fourni dans la conversation, réponds avec tes connaissances "
+    "générales en précisant explicitement leur date de validité limitée — "
+    "n'invente jamais de faits récents ni de citations d'un outil fictif."
 )
 
 # ── Outil de recherche web (Tavily) — le chat n'avait aucun accès temps réel ──
@@ -74,20 +79,44 @@ async def _execute_tool_call(name: str, arguments: dict) -> str:
     return f"Résultats de recherche web pour « {query} » :\n\n{formatted}"
 
 
-async def _run_tool_loop(messages: list, temperature: float, max_tokens: int) -> tuple[list, bool]:
+# ── Détection déterministe des questions d'actualité ─────────────────────────
+# "auto" laisse le LLM décider seul — peu fiable en pratique (variance run-to-run
+# observée sur groq/llama-3.3-70b). Pour les questions à mots-clés d'actualité
+# explicites, on force l'appel de l'outil plutôt que d'espérer que le modèle
+# le déclenche de lui-même.
+_NEWS_TRIGGER_KEYWORDS = (
+    "actualite", "actualites", "nouvelles", "derniere", "dernieres",
+    "recent", "recente", "recentes", "aujourd'hui", "aujourdhui",
+    "cette semaine", "ce mois", "en ce moment", "news",
+)
+_ACCENT_MAP = str.maketrans("àâäéèêëîïôöùûüç", "aaaeeeeiioouuuc")
+
+
+def _is_news_query(text_: str) -> bool:
+    normalized = (text_ or "").lower().translate(_ACCENT_MAP)
+    return any(kw in normalized for kw in _NEWS_TRIGGER_KEYWORDS)
+
+
+async def _run_tool_loop(messages: list, temperature: float, max_tokens: int, force: bool = False) -> tuple[list, bool]:
     """
     Une passe de décision d'outil (non-stream). Retourne (messages_enrichis, tool_used).
+    `force=True` (question d'actualité détectée par mots-clés) impose l'appel de l'outil
+    plutôt que de laisser le modèle décider en mode "auto" — moins fiable en pratique.
     Défensif : certains providers du fallback chain (gemini/cerebras/openrouter) peuvent
     ne pas accepter le même format tools/tool_choice que groq. Toute erreur ici dégrade
     proprement vers une réponse sans outil plutôt que de faire échouer le chat (500).
     """
+    tool_choice = (
+        {"type": "function", "function": {"name": "search_web_for_news"}}
+        if force else "auto"
+    )
     try:
         decision = await llm_router.complete(
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
             tools=[_WEB_SEARCH_TOOL],
-            tool_choice="auto",
+            tool_choice=tool_choice,
         )
         decision_msg = decision.choices[0].message
         tool_calls = getattr(decision_msg, "tool_calls", None)
@@ -167,7 +196,10 @@ async def chat(body: ChatRequest):
     messages = [{"role": "system", "content": body.system_prompt or _DEFAULT_SYSTEM_PROMPT}]
     messages.extend([m.dict() for m in body.messages])
 
-    messages, tool_used = await _run_tool_loop(messages, body.temperature, body.max_tokens)
+    last_user_text = body.messages[-1].content if body.messages else ""
+    messages, tool_used = await _run_tool_loop(
+        messages, body.temperature, body.max_tokens, force=_is_news_query(last_user_text)
+    )
 
     try:
         # Certains providers (Groq notamment) exigent que `tools` reste déclaré
@@ -216,7 +248,9 @@ async def chat_stream(session_id: str, message: str, temperature: float = 0.7):
         try:
             # Phase 1 — décision d'outil (non-stream, léger). La réponse finale
             # streamée en phase 2 inclut les résultats Tavily si l'outil a été appelé.
-            messages, tool_used = await _run_tool_loop(messages, temperature, max_tokens=400)
+            messages, tool_used = await _run_tool_loop(
+                messages, temperature, max_tokens=400, force=_is_news_query(message)
+            )
             if tool_used:
                 yield f"data: {json.dumps({'event': 'tool_call', 'tool': 'search_web_for_news'})}\n\n"
 
