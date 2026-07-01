@@ -207,6 +207,8 @@ class KoraLLMRouter:
         max_tokens: int = 2048,
         stream: bool = False,
         response_format=None,
+        tools: Optional[list] = None,
+        tool_choice=None,
     ):
         active = self.get_active_provider()
         if not active:
@@ -226,6 +228,9 @@ class KoraLLMRouter:
         }
         if response_format:
             params["response_format"] = response_format
+        if tools:
+            params["tools"] = tools
+            params["tool_choice"] = tool_choice or "auto"
 
         self._set_litellm_keys()
 

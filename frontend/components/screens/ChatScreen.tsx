@@ -22,6 +22,7 @@ export function ChatScreen() {
   const [streaming, setStreaming] = useState(false)
   const [sidebarRefresh, setSidebarRefresh] = useState(0)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+  const [searching, setSearching] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const { show } = useToast()
@@ -65,6 +66,7 @@ export function ChatScreen() {
     const assistantMsg: Message = { role: 'assistant', content: '', streaming: true }
     setMessages(prev => [...prev, userMsg, assistantMsg])
     setStreaming(true)
+    setSearching(false)
 
     // Session créée en base au premier message — pas au chargement de page
     // (évite de polluer la sidebar de conversations vides jamais utilisées).
@@ -89,6 +91,7 @@ export function ChatScreen() {
       if (e.data === '[DONE]') {
         es.close()
         setStreaming(false)
+        setSearching(false)
         setMessages(prev =>
           prev.map((m, i) =>
             i === prev.length - 1 ? { ...m, streaming: false, content: accumulated } : m
@@ -99,7 +102,12 @@ export function ChatScreen() {
       }
       try {
         const data = JSON.parse(e.data)
+        if (data.event === 'tool_call') {
+          setSearching(true)
+          return
+        }
         if (data.token) {
+          setSearching(false)
           accumulated += data.token
           setMessages(prev =>
             prev.map((m, i) =>
@@ -111,6 +119,7 @@ export function ChatScreen() {
           show(data.error, 'error')
           es.close()
           setStreaming(false)
+          setSearching(false)
         }
       } catch { /* ignore */ }
     }
@@ -210,6 +219,14 @@ export function ChatScreen() {
         {messages.map((msg, i) => (
           <ChatBubble key={i} message={msg} />
         ))}
+        {searching && (
+          <div className="flex items-center gap-2 pl-11">
+            <Spinner size="sm" />
+            <span className="font-heading text-[12px] text-gray-dk italic">
+              Recherche web en cours…
+            </span>
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
 

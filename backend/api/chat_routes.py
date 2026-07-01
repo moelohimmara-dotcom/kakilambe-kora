@@ -21,8 +21,85 @@ _DEFAULT_SYSTEM_PROMPT = (
     "fal.ai, publication WordPress) avec validation humaine (HITL) en mode "
     "semi-automatique. Ici, dans ce chat, tu assistes l'utilisateur — "
     "rédaction, recherche, brouillons d'articles — avec le même ton neutre, "
-    "factuel et professionnel que les articles publiés. Réponds en français."
+    "factuel et professionnel que les articles publiés. Réponds en français.\n\n"
+    "TU DISPOSES DE L'OUTIL search_web_for_news. Utilise-le SYSTÉMATIQUEMENT "
+    "pour toute question sur l'actualité, un événement récent, ou une "
+    "information qui nécessite des données à jour (au-delà de ta date de "
+    "connaissance). Ne dis jamais que tu n'as pas accès à des informations "
+    "en temps réel sans avoir d'abord appelé cet outil."
 )
+
+# ── Outil de recherche web (Tavily) — le chat n'avait aucun accès temps réel ──
+
+_WEB_SEARCH_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "search_web_for_news",
+        "description": (
+            "Recherche des actualités et informations récentes sur le web via Tavily. "
+            "À utiliser systématiquement pour toute question sur l'actualité guinéenne "
+            "ou tout sujet nécessitant des données postérieures à la date de connaissance du modèle."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Requête de recherche ciblée (ex: 'actualité Guinée Conakry juillet 2026').",
+                }
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+
+async def _execute_tool_call(name: str, arguments: dict) -> str:
+    if name != "search_web_for_news":
+        return "Outil inconnu."
+
+    from integrations.tavily_client import tavily_client
+    query = arguments.get("query") or "actualité Guinée Conakry"
+    results = await tavily_client.search(query, max_results=5)
+
+    logger.info("chat_tool_call_executed", tool=name, query=query, results_count=len(results))
+
+    if not results:
+        return f"Aucun résultat trouvé pour la recherche « {query} »."
+
+    formatted = "\n\n".join(
+        f"- {r.get('title', 'Sans titre')} ({r.get('url', '')})\n  {(r.get('content') or '')[:300]}"
+        for r in results
+    )
+    return f"Résultats de recherche web pour « {query} » :\n\n{formatted}"
+
+
+async def _run_tool_loop(messages: list, temperature: float, max_tokens: int) -> tuple[list, bool]:
+    """Une passe de décision d'outil (non-stream). Retourne (messages_enrichis, tool_used)."""
+    decision = await llm_router.complete(
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        tools=[_WEB_SEARCH_TOOL],
+        tool_choice="auto",
+    )
+    decision_msg = decision.choices[0].message
+    tool_calls = getattr(decision_msg, "tool_calls", None)
+
+    if not tool_calls:
+        return messages, False
+
+    logger.info("chat_tool_call_triggered", count=len(tool_calls))
+    enriched = list(messages) + [decision_msg.model_dump()]
+    for tc in tool_calls:
+        try:
+            args = json.loads(tc.function.arguments or "{}")
+        except (json.JSONDecodeError, AttributeError):
+            args = {}
+        result = await _execute_tool_call(tc.function.name, args)
+        enriched.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+
+    return enriched, True
 
 
 class ChatMessage(BaseModel):
@@ -80,6 +157,8 @@ async def chat(body: ChatRequest):
     messages = [{"role": "system", "content": body.system_prompt or _DEFAULT_SYSTEM_PROMPT}]
     messages.extend([m.dict() for m in body.messages])
 
+    messages, tool_used = await _run_tool_loop(messages, body.temperature, body.max_tokens)
+
     response = await llm_router.complete(
         messages=messages,
         temperature=body.temperature,
@@ -118,6 +197,12 @@ async def chat_stream(session_id: str, message: str, temperature: float = 0.7):
         ]
         accumulated = ""
         try:
+            # Phase 1 — décision d'outil (non-stream, léger). La réponse finale
+            # streamée en phase 2 inclut les résultats Tavily si l'outil a été appelé.
+            messages, tool_used = await _run_tool_loop(messages, temperature, max_tokens=400)
+            if tool_used:
+                yield f"data: {json.dumps({'event': 'tool_call', 'tool': 'search_web_for_news'})}\n\n"
+
             response = await llm_router.complete(
                 messages=messages,
                 temperature=temperature,
