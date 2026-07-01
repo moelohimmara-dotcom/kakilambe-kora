@@ -3,7 +3,7 @@
 export type ArticleStatus = 'DRAFT' | 'PENDING_REVIEW' | 'PUBLISHED' | 'REJECTED' | 'FAILED'
 export type ArticleOrigin = 'AGENT_AUTO' | 'AGENT_SEMI' | 'CHAT_EXPORT'
 export type ProviderStatus = 'ACTIVE' | 'RATE_LIMITED' | 'EXHAUSTED' | 'OFFLINE'
-export type CycleStatus = 'RUNNING' | 'COMPLETED' | 'FAILED' | 'PAUSED'
+export type CycleStatus = 'RUNNING' | 'COMPLETED' | 'FAILED' | 'PAUSED' | 'CANCELLED'
 export type CycleMode = 'auto' | 'semi'
 export type MessageRole = 'user' | 'assistant' | 'system'
 export type BadgeVariant = 'orange' | 'sage' | 'blue' | 'gray' | 'danger' | 'warning'

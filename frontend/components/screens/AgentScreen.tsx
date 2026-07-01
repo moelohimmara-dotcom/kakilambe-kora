@@ -26,12 +26,22 @@ interface CycleState {
   active_cycles?: number
 }
 
+const CYCLE_ID_STORAGE_KEY = 'kora_current_cycle_id'
+
 export function AgentScreen() {
   const [mode, setMode] = useState<'semi' | 'auto'>('semi')
   const [logs, setLogs] = useState<LogEntry[]>([])
+  // Persisté en localStorage : évite de perdre le fil du cycle en cours si
+  // l'utilisateur rafraîchit la page (le backend garde son propre état tant
+  // qu'il n'a pas redémarré — /api/agent/status retombe sur la DB sinon).
   const [currentCycleId, setCurrentCycleId] = useState<string | null>(null)
   const logsEndRef = useRef<HTMLDivElement>(null)
   const { show } = useToast()
+
+  useEffect(() => {
+    const saved = localStorage.getItem(CYCLE_ID_STORAGE_KEY)
+    if (saved) setCurrentCycleId(saved)
+  }, [])
 
   // Polling status
   const fetchStatus = useCallback(
@@ -40,13 +50,32 @@ export function AgentScreen() {
   )
   const { data: cycle, refetch: refetchStatus } = useAsync<CycleState>(fetchStatus)
 
+  // Reprise de session : si aucun cycle_id local mais que le backend en
+  // retrouve un actif (via la DB — cf. _get_active_cycle_from_db), on
+  // l'adopte automatiquement plutôt que de rester bloqué sur "Inactif".
+  useEffect(() => {
+    if (!currentCycleId && cycle?.cycle_id && (cycle.status === 'RUNNING' || cycle.status === 'PAUSED')) {
+      setCurrentCycleId(cycle.cycle_id)
+    }
+  }, [currentCycleId, cycle])
+
+  // Persiste / nettoie le cycle_id courant selon son statut
+  useEffect(() => {
+    if (!currentCycleId) return
+    if (cycle?.status && ['COMPLETED', 'FAILED', 'CANCELLED'].includes(cycle.status)) {
+      localStorage.removeItem(CYCLE_ID_STORAGE_KEY)
+    } else {
+      localStorage.setItem(CYCLE_ID_STORAGE_KEY, currentCycleId)
+    }
+  }, [currentCycleId, cycle?.status])
+
   // Refresh pendant un cycle actif
   useInterval(
     refetchStatus,
     cycle?.status === 'RUNNING' ? 3000 : cycle?.status === 'PAUSED' ? 5000 : null
   )
 
-  // SSE logs
+  // SSE logs — rejoue l'historique DB (event replay) puis bascule en direct
   useEffect(() => {
     if (!currentCycleId) return
     const url = agentApi.streamUrl(currentCycleId)
@@ -54,7 +83,7 @@ export function AgentScreen() {
     es.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data)
-        if (data.event === 'heartbeat' || data.event === 'connected') return
+        if (['heartbeat', 'connected', 'done', 'history_end'].includes(data.event)) return
         setLogs(prev => [...prev.slice(-199), data as LogEntry])
       } catch { /* ignore */ }
     }
@@ -89,6 +118,14 @@ export function AgentScreen() {
     await agentApi.reject(currentCycleId)
     addLog({ level: 'HITL', event: 'Article rejeté — passage au suivant' })
     show('Article rejeté', 'warning')
+    await refetchStatus()
+  })
+
+  const { mutate: cancelCycle, loading: cancelling } = useMutation(async () => {
+    if (!currentCycleId) return
+    await agentApi.cancel(currentCycleId)
+    addLog({ level: 'WARN', event: 'Annulation demandée par l\'utilisateur' })
+    show('Cycle annulé', 'warning')
     await refetchStatus()
   })
 
@@ -145,6 +182,18 @@ export function AgentScreen() {
                 <span className="w-2 h-2 rounded-full bg-orange animate-[kora-pulse_2s_ease-in-out_infinite]" aria-hidden="true"/>
                 <span className="font-heading text-[12px]">Cycle en cours d'exécution…</span>
               </div>
+            )}
+
+            {(isRunning || isPaused) && (
+              <Button
+                variant="danger"
+                size="sm"
+                loading={cancelling}
+                onClick={() => cancelCycle(undefined as unknown as void)}
+                className="w-full"
+              >
+                ⏹ Annuler le cycle
+              </Button>
             )}
           </div>
         </Card>
@@ -263,6 +312,7 @@ function CycleStatusBadge({ status }: { status: string }) {
     PAUSED:    { label: 'En pause', variant: 'warning' },
     COMPLETED: { label: 'Terminé', variant: 'sage' },
     FAILED:    { label: 'Échoué', variant: 'danger' },
+    CANCELLED: { label: 'Annulé', variant: 'gray' },
     IDLE:      { label: 'Inactif', variant: 'gray' },
   }
   const { label, variant } = map[status] ?? { label: status, variant: 'gray' as const }
@@ -273,5 +323,5 @@ function logClass(level: string): string {
   const map: Record<string, string> = {
     INFO: 'log-info', OK: 'log-ok', WARN: 'log-warn', ERROR: 'log-err', HITL: 'log-hitl',
   }
-  return map[level.toUpperCase()] ?? 'text-gray-400'
+  return map[(level || '').toUpperCase()] ?? 'text-gray-400'
 }

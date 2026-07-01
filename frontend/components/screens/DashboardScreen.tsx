@@ -9,12 +9,22 @@ import { Spinner } from '@/components/ui/Spinner'
 import { useAsync, useInterval } from '@/lib/hooks'
 import { articleApi, agentApi } from '@/lib/api'
 import { formatRelative, statusLabel, statusVariant } from '@/lib/utils'
-import type { Article, Cycle } from '@/lib/types'
+import type { Article } from '@/lib/types'
+
+// Forme réelle de la réponse GET /api/agent/status — plate, jamais imbriquée
+// sous une clé "cycle" (bug précédent : (res as {cycle?}).cycle était toujours
+// undefined, la carte de statut affichait "Inactif" en permanence).
+interface CycleStatusInfo {
+  cycle_id?: string
+  status: string
+  mode?: string
+  published_count?: number
+}
 
 interface DashboardData {
   pending: Article[]
   recent: Article[]
-  cycle: Cycle | null
+  cycle: CycleStatusInfo | null
 }
 
 export function DashboardScreen() {
@@ -28,7 +38,7 @@ export function DashboardScreen() {
     return {
       pending: pendingRes.status === 'fulfilled' ? (pendingRes.value as { items: Article[] }).items ?? [] : [],
       recent: recentRes.status === 'fulfilled' ? (recentRes.value as { items: Article[] }).items ?? [] : [],
-      cycle: cycleRes.status === 'fulfilled' ? (cycleRes.value as { cycle?: Cycle }).cycle ?? null : null,
+      cycle: cycleRes.status === 'fulfilled' ? (cycleRes.value as unknown as CycleStatusInfo) : null,
     }
   }, [])
 
@@ -43,6 +53,10 @@ export function DashboardScreen() {
   const pending = data?.pending ?? []
   const recent = data?.recent ?? []
   const cycle = data?.cycle
+  const isPaused = cycle?.status === 'PAUSED'
+  // L'article le plus récent en attente correspond à celui qui bloque le
+  // cycle en pause HITL — mis en avant dans la carte d'aperçu ci-dessous.
+  const hitlArticle = isPaused ? pending[0] : undefined
 
   return (
     <div className="p-6 md:p-8 max-w-6xl">
@@ -79,6 +93,48 @@ export function DashboardScreen() {
         />
         <CycleStatusCard cycle={cycle ?? null} loading={loading} />
       </div>
+
+      {/* Aperçu HITL — cycle en pause, article prêt à valider */}
+      {hitlArticle && (
+        <section className="mb-8">
+          <Card className="border-orange/30 bg-orange/5">
+            <div className="flex items-start gap-4">
+              {hitlArticle.image_url ? (
+                <img
+                  src={hitlArticle.image_url}
+                  alt=""
+                  className="w-24 h-24 rounded-lg object-cover shrink-0 bg-gray-pale"
+                />
+              ) : (
+                <div className="w-24 h-24 rounded-lg bg-orange/10 flex items-center justify-center shrink-0">
+                  <span className="text-orange font-heading font-bold text-2xl">/</span>
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <Badge variant="warning">Cycle en pause · HITL</Badge>
+                </div>
+                <h3 className="font-heading font-semibold text-[15px] text-anthracite line-clamp-1">
+                  {hitlArticle.titre}
+                </h3>
+                {hitlArticle.chapeau && (
+                  <p className="font-heading text-[12px] text-gray-dk mt-1 line-clamp-2">
+                    {hitlArticle.chapeau}
+                  </p>
+                )}
+                <div className="flex gap-3 mt-3">
+                  <Button href="/agent" variant="primary" size="sm">
+                    Valider dans Agent KORA →
+                  </Button>
+                  <Button href={`/articles/${hitlArticle.id}`} variant="outline" size="sm">
+                    Lire l'article
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </Card>
+        </section>
+      )}
 
       {/* Articles en attente */}
       {pending.length > 0 && (
@@ -152,13 +208,16 @@ function KpiCard({
   )
 }
 
-function CycleStatusCard({ cycle, loading }: { cycle: Cycle | null; loading: boolean }) {
+function CycleStatusCard({ cycle, loading }: { cycle: CycleStatusInfo | null; loading: boolean }) {
   const statusMap: Record<string, { label: string; color: string }> = {
     RUNNING: { label: 'En cours', color: 'text-orange' },
     PAUSED:  { label: 'En pause HITL', color: 'text-warning' },
     COMPLETED: { label: 'Complété', color: 'text-sage' },
     FAILED: { label: 'Échoué', color: 'text-danger' },
+    CANCELLED: { label: 'Annulé', color: 'text-gray-med' },
+    IDLE: { label: 'Inactif', color: 'text-gray-med' },
   }
+  const active = cycle && cycle.status !== 'IDLE'
   const st = cycle ? (statusMap[cycle.status] ?? { label: cycle.status, color: 'text-gray-dk' }) : null
 
   return (
@@ -170,7 +229,7 @@ function CycleStatusCard({ cycle, loading }: { cycle: Cycle | null; loading: boo
       ) : (
         <div className="font-heading font-bold text-xl text-gray-med">Inactif</div>
       )}
-      <p className="font-heading text-[11px] text-gray-dk mt-1">Dernier cycle</p>
+      <p className="font-heading text-[11px] text-gray-dk mt-1">{active ? 'Cycle en cours' : 'Dernier cycle'}</p>
     </Card>
   )
 }

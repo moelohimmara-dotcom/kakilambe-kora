@@ -29,6 +29,8 @@ export const agentApi = {
     request<{ status: string }>(`/api/agent/resume/${cycleId}`, { method: 'POST' }),
   reject: (cycleId: string) =>
     request<{ status: string }>(`/api/agent/reject/${cycleId}`, { method: 'POST' }),
+  cancel: (cycleId: string) =>
+    request<{ status: string }>(`/api/agent/cancel/${cycleId}`, { method: 'POST' }),
   streamUrl: (cycleId?: string) =>
     `${BASE}/api/agent/stream${cycleId ? `?cycle_id=${cycleId}` : ''}`,
 }
