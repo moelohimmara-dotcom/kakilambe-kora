@@ -11,11 +11,13 @@ directement le résultat produit avec les vraies clés de production.
 Usage : python test_chat_rag.py [base_url]
 """
 import sys
+import time
 import json
 import httpx
 
 BASE_URL = sys.argv[1] if len(sys.argv) > 1 else "https://kora-582m5.ondigitalocean.app"
 QUESTION = "Quelles sont les dernières nouvelles de Guinée ?"
+_MAX_ATTEMPTS = 3
 
 _REFUSAL_MARKERS = [
     "je n'ai pas accès",
@@ -26,6 +28,27 @@ _REFUSAL_MARKERS = [
 ]
 
 
+def _post_with_retry(payload: dict):
+    """
+    Retry sur erreurs 5xx transitoires observées côté plateforme DigitalOcean
+    (blips edge/load-balancer répondant en 1-3s, sans rapport avec le temps de
+    traitement applicatif — confirmé par des tests manuels répétés montrant un
+    taux de succès ~2/3 avec des réponses saines en 3-8s le reste du temps).
+    """
+    last_err = None
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            r = httpx.post(f"{BASE_URL}/api/chat", json=payload, timeout=90)
+            r.raise_for_status()
+            return r
+        except Exception as e:
+            last_err = e
+            print(f"  (tentative {attempt}/{_MAX_ATTEMPTS} échouée : {e})")
+            if attempt < _MAX_ATTEMPTS:
+                time.sleep(4)
+    raise last_err
+
+
 def main() -> int:
     print(f"→ POST {BASE_URL}/api/chat")
     print(f"→ Question : {QUESTION!r}\n")
@@ -33,10 +56,9 @@ def main() -> int:
     payload = {"messages": [{"role": "user", "content": QUESTION}], "debug": True}
 
     try:
-        r = httpx.post(f"{BASE_URL}/api/chat", json=payload, timeout=90)
-        r.raise_for_status()
+        r = _post_with_retry(payload)
     except Exception as e:
-        print(f"❌ Requête échouée : {e}")
+        print(f"❌ Requête échouée après {_MAX_ATTEMPTS} tentatives : {e}")
         return 1
 
     data = r.json()
