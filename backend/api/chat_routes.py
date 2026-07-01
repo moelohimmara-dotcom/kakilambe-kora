@@ -75,31 +75,41 @@ async def _execute_tool_call(name: str, arguments: dict) -> str:
 
 
 async def _run_tool_loop(messages: list, temperature: float, max_tokens: int) -> tuple[list, bool]:
-    """Une passe de décision d'outil (non-stream). Retourne (messages_enrichis, tool_used)."""
-    decision = await llm_router.complete(
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        tools=[_WEB_SEARCH_TOOL],
-        tool_choice="auto",
-    )
-    decision_msg = decision.choices[0].message
-    tool_calls = getattr(decision_msg, "tool_calls", None)
+    """
+    Une passe de décision d'outil (non-stream). Retourne (messages_enrichis, tool_used).
+    Défensif : certains providers du fallback chain (gemini/cerebras/openrouter) peuvent
+    ne pas accepter le même format tools/tool_choice que groq. Toute erreur ici dégrade
+    proprement vers une réponse sans outil plutôt que de faire échouer le chat (500).
+    """
+    try:
+        decision = await llm_router.complete(
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            tools=[_WEB_SEARCH_TOOL],
+            tool_choice="auto",
+        )
+        decision_msg = decision.choices[0].message
+        tool_calls = getattr(decision_msg, "tool_calls", None)
 
-    if not tool_calls:
+        if not tool_calls:
+            return messages, False
+
+        logger.info("chat_tool_call_triggered", count=len(tool_calls))
+        enriched = list(messages) + [decision_msg.model_dump()]
+        for tc in tool_calls:
+            try:
+                args = json.loads(tc.function.arguments or "{}")
+            except (json.JSONDecodeError, AttributeError):
+                args = {}
+            result = await _execute_tool_call(tc.function.name, args)
+            enriched.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+
+        return enriched, True
+
+    except Exception as e:
+        logger.warning("chat_tool_loop_failed", error=str(e))
         return messages, False
-
-    logger.info("chat_tool_call_triggered", count=len(tool_calls))
-    enriched = list(messages) + [decision_msg.model_dump()]
-    for tc in tool_calls:
-        try:
-            args = json.loads(tc.function.arguments or "{}")
-        except (json.JSONDecodeError, AttributeError):
-            args = {}
-        result = await _execute_tool_call(tc.function.name, args)
-        enriched.append({"role": "tool", "tool_call_id": tc.id, "content": result})
-
-    return enriched, True
 
 
 class ChatMessage(BaseModel):
