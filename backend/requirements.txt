@@ -16,5 +16,4 @@ python-dotenv==1.0.1
 pytz==2024.1
 google-auth==2.35.0
 google-api-python-client==2.147.0
-fal-client==0.4.1
 qstash==3.4.0

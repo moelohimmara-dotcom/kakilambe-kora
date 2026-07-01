@@ -38,10 +38,6 @@ class Settings(BaseSettings):
     BRIGHTDATA_API_KEY: str = ""
     BRIGHTDATA_ZONE: str = "unlocker"
 
-    # ── Image Generation ─────────────────────────────────────────────────────
-    IMAGE_GEN_API_KEY: str = ""
-    IMAGE_GEN_PROVIDER: str = "fal"
-
     # ── WordPress ────────────────────────────────────────────────────────────
     WP_BASE_URL: str = "https://kakilambe.com"
     WP_USERNAME: str = "kora_publisher"

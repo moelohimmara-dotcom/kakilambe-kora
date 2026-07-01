@@ -147,7 +147,7 @@ async def test_writer_node_mock():
 
 async def test_full_graph_mock():
     """Test : graphe complet avec tous les nœuds mockés."""
-    from agent.graph import kora_graph
+    from agent.graph import kora_graph_auto
 
     initial_state = {
         "mode": "auto",   # Mode auto pour éviter l'interruption HITL dans le test
@@ -196,23 +196,22 @@ async def test_full_graph_mock():
                 with patch("agent.nodes.writer._save_to_db", new_callable=AsyncMock, return_value="mock-db-id"):
                     with patch("agent.nodes.illustrator._save_db_update", new_callable=AsyncMock):
                         with patch("integrations.image_gen_client.ImageGenClient.generate", new_callable=AsyncMock, return_value="https://example.com/image.jpg"):
-                            with patch("integrations.wordpress_client.WordPressClient.upload_media", new_callable=AsyncMock, return_value=42):
+                            with patch("integrations.wordpress_client.WordPressClient.upload_media", new_callable=AsyncMock, return_value=(42, "https://kakilambe.com/image-test.jpg")):
                                 with patch("integrations.wordpress_client.WordPressClient.publish_post", new_callable=AsyncMock, return_value="https://kakilambe.com/article-test"):
-                                    with patch("agent.nodes.publisher._queue_delay", new_callable=AsyncMock):
-                                        with patch("agent.nodes.publisher._update_db", new_callable=AsyncMock):
-                                            with patch("agent.nodes.reporter._update_cycle_db", new_callable=AsyncMock):
-                                                with patch("integrations.gmail_client.GmailClient.send_report", new_callable=AsyncMock):
-                                                    result = await kora_graph.ainvoke(initial_state, config=config)
+                                    with patch("agent.nodes.publisher._update_db", new_callable=AsyncMock):
+                                        with patch("agent.nodes.reporter._update_cycle_db", new_callable=AsyncMock):
+                                            with patch("integrations.gmail_client.GmailClient.send_report", new_callable=AsyncMock):
+                                                result = await kora_graph_auto.ainvoke(initial_state, config=config)
 
-    # interrupt_before=["publish_wordpress"] s'applique même en mode "auto"
-    # Le graphe pause avant publish — result est l'état capturé à ce point.
+    # Mode "auto" : pas d'interrupt_before (réservé à kora_graph_semi) — le
+    # graphe va jusqu'au bout, publish_wordpress inclus.
     assert result is not None
     print(f"  [OK] Graphe complet : cycle lancé (published={result.get('published_count', 0)})")
 
 
 async def test_hitl_interrupt():
     """Test : vérification que le graphe s'interrompt avant publish en mode semi."""
-    from agent.graph import kora_graph
+    from agent.graph import kora_graph_semi
     from langgraph.graph import END
 
     initial_state = {
@@ -243,12 +242,12 @@ async def test_hitl_interrupt():
                 with patch("agent.nodes.writer._save_to_db", new_callable=AsyncMock, return_value="hitl-id"):
                     with patch("agent.nodes.illustrator._save_db_update", new_callable=AsyncMock):
                         with patch("integrations.image_gen_client.ImageGenClient.generate", new_callable=AsyncMock, return_value="https://example.com/img.jpg"):
-                            with patch("integrations.wordpress_client.WordPressClient.upload_media", new_callable=AsyncMock, return_value=1):
+                            with patch("integrations.wordpress_client.WordPressClient.upload_media", new_callable=AsyncMock, return_value=(1, "https://kakilambe.com/image-hitl.jpg")):
                                 # Invoke -- doit s'arreter avant publish_wordpress (interrupt_before)
-                                result = await kora_graph.ainvoke(initial_state, config=config)
+                                result = await kora_graph_semi.ainvoke(initial_state, config=config)
 
     # Vérifier que le graphe est en pause (interrupt)
-    snapshot = await kora_graph.aget_state(config)
+    snapshot = await kora_graph_semi.aget_state(config)
     interrupted = snapshot.next if snapshot else []
     print(f"  [OK] HITL interrupt : prochain nœud = {list(interrupted)}")
 

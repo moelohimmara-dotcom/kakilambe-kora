@@ -11,6 +11,8 @@ from agent.state import KoraState
 from agent.state import ArticleKORA
 from core.llm_router import llm_router
 from core.logger import logger
+from db.connection import get_db
+from sqlalchemy import text
 
 _WRITE_PROMPT = """Tu es KORA, journaliste IA expert de kakilambe.com, site d'actualité guinéen.
 Style éditorial : BBC News Afrique / New York Times. Neutre, factuel, accessible. Langue : FRANÇAIS.
@@ -210,8 +212,6 @@ async def _save_to_db(article: dict, cycle_id: str, mode: str = "semi") -> str:
     status = "PENDING_REVIEW" if mode == "semi" else "DRAFT"
     origin = "AGENT_AUTO" if mode == "auto" else "AGENT_SEMI"
     try:
-        from db.connection import get_db
-        from sqlalchemy import text
         async with get_db() as db:
             result = await db.execute(
                 text("""

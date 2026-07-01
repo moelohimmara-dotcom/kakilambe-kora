@@ -41,6 +41,12 @@ export function ArticleEditorScreen({ id }: { id: string }) {
     router.push('/articles')
   })
 
+  const { mutate: regenerateImage, loading: regeneratingImage } = useMutation(async () => {
+    await articleApi.regenerateImage(id)
+    await refetch()
+    show('Image régénérée', 'success')
+  })
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -109,12 +115,25 @@ export function ArticleEditorScreen({ id }: { id: string }) {
         <main className="flex-1 lg:max-w-[66%] p-6 md:p-8 border-r border-gray-pale">
           {/* Image */}
           {article.image_url && (
-            <div className="mb-6 rounded-xl overflow-hidden">
-              <img
-                src={article.image_url}
-                alt="Illustration de l'article"
-                className="w-full h-52 object-cover"
-              />
+            <div className="mb-6 relative group">
+              <div className="rounded-xl overflow-hidden">
+                <img
+                  src={article.image_url}
+                  alt="Illustration de l'article"
+                  className="w-full h-52 object-cover"
+                />
+              </div>
+              {article.status !== 'PUBLISHED' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  loading={regeneratingImage}
+                  onClick={() => regenerateImage(undefined as unknown as void)}
+                  className="absolute bottom-3 right-3 bg-white/90 backdrop-blur-sm"
+                >
+                  ↻ Régénérer l'image
+                </Button>
+              )}
             </div>
           )}
 

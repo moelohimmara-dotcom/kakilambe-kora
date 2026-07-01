@@ -158,11 +158,10 @@ async def health_tavily():
     except Exception as e:
         return {"status": "error", "detail": f"Tavily failed: {e}"}
 
-@app.get("/health/fal", tags=["system"])
-async def health_fal():
-    if not settings.IMAGE_GEN_API_KEY:
-        return {"status": "error", "detail": "IMAGE_GEN_API_KEY not configured"}
-    return {"status": "ok", "detail": "fal.ai key present"}
+@app.get("/health/image_gen", tags=["system"])
+async def health_image_gen():
+    """Pollinations.ai — gratuit, sans clé API requise."""
+    return {"status": "ok", "detail": "pollinations.ai (no API key required)"}
 
 @app.get("/health/qstash", tags=["system"])
 async def health_qstash():

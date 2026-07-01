@@ -1,18 +1,21 @@
 """
 NŒUD 4 — generate_image
-Génère une image via Fal.ai à partir du prompt de l'article.
-Upload sur WordPress Media API → récupère l'ID média.
+Génère une image via pollinations.ai (gratuit, sans clé) à partir du prompt
+de l'article. Upload sur WordPress Media API → récupère l'ID média.
+
+generate_and_upload_image() est extrait pour être réutilisé par l'endpoint
+de régénération HITL (api/article_routes.py) sans dupliquer la logique.
 """
 from agent.state import KoraState
 from core.logger import logger
+from db.connection import get_db
+from sqlalchemy import text
 
 
 async def _save_db_update(db_id: str, image_url: str, wp_media_id: int):
     if not db_id or db_id == "unknown":
         return
     try:
-        from db.connection import get_db
-        from sqlalchemy import text
         async with get_db() as db:
             await db.execute(
                 text("UPDATE articles SET image_url=:url, wp_media_id=:mid WHERE id=:id"),
@@ -20,6 +23,32 @@ async def _save_db_update(db_id: str, image_url: str, wp_media_id: int):
             )
     except Exception as e:
         logger.warning("illustrator_db_update_failed", error=str(e))
+
+
+def _slugify(titre: str) -> str:
+    slug = (titre or "kora-article")[:40].lower()
+    slug = slug.encode("ascii", "ignore").decode("ascii")
+    return "".join(c if c.isalnum() else "-" for c in slug)
+
+
+async def generate_and_upload_image(image_prompt: str, titre: str) -> tuple[str, int, str]:
+    """
+    Génère une image et l'upload sur WordPress. Retourne (image_url, wp_media_id, wp_image_src).
+    Lève une exception si la génération ou l'upload échoue — laisse l'appelant décider
+    du repli (le nœud graphe dégrade proprement, l'endpoint HITL renvoie une erreur claire).
+    """
+    from integrations.image_gen_client import image_gen_client
+    image_url = await image_gen_client.generate(image_prompt)
+    if not image_url:
+        raise RuntimeError("Génération d'image vide (pollinations.ai)")
+
+    from integrations.wordpress_client import wp_client
+    wp_media_id, wp_image_src = await wp_client.upload_media(
+        image_url,
+        f"{_slugify(titre)}.jpg",
+        alt_text=(titre or "")[:80],
+    )
+    return image_url, wp_media_id, wp_image_src
 
 
 async def run(state: KoraState) -> KoraState:
@@ -34,27 +63,10 @@ async def run(state: KoraState) -> KoraState:
     logger.info("node_illustrator_start", cycle_id=state["cycle_id"], db_id=db_id)
 
     try:
-        # 1. Génération image
-        from integrations.image_gen_client import image_gen_client
-        image_url = await image_gen_client.generate(image_prompt)
-
-        if not image_url:
-            logger.warning("image_gen_empty", cycle_id=state["cycle_id"])
-            return {**state, "image_url": None, "wp_media_id": None}
-
-        # 2. Upload WordPress Media
-        from integrations.wordpress_client import wp_client
-        titre_slug = article.get("titre", "kora-article")[:40].lower()
-        titre_slug = titre_slug.encode("ascii", "ignore").decode("ascii")
-        titre_slug = "".join(c if c.isalnum() else "-" for c in titre_slug)
-        titre_clean = article.get("titre", "")[:80]
-        wp_media_id, wp_image_src = await wp_client.upload_media(
-            image_url,
-            f"{titre_slug}.jpg",
-            alt_text=titre_clean,
+        image_url, wp_media_id, wp_image_src = await generate_and_upload_image(
+            image_prompt, article.get("titre", "")
         )
 
-        # 3. Mise à jour en base
         await _save_db_update(db_id, image_url, wp_media_id)
 
         logger.info(
@@ -65,7 +77,6 @@ async def run(state: KoraState) -> KoraState:
             wp_image_src=wp_image_src,
         )
 
-        # Mettre à jour l'article généré avec l'ID média et l'URL WP de l'image
         updated_article = {**article, "wp_media_id": wp_media_id, "wp_image_src": wp_image_src or image_url}
         return {**state, "image_url": image_url, "wp_media_id": wp_media_id, "generated_article": updated_article}
 

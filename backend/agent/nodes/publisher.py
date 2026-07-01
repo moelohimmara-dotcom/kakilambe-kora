@@ -13,6 +13,8 @@ directe : un souci d'infrastructure secondaire ne doit jamais bloquer un cycle.
 """
 from agent.state import KoraState
 from core.logger import logger
+from db.connection import get_db
+from sqlalchemy import text
 
 _DEFAULT_DELAY_SECONDS = 120
 
@@ -22,8 +24,6 @@ async def _update_db(db_id: str, status: str, wp_url: str = ""):
     if not db_id or db_id == "unknown":
         return
     try:
-        from db.connection import get_db
-        from sqlalchemy import text
         async with get_db() as db:
             if status == "PUBLISHED" and wp_url:
                 await db.execute(
@@ -41,8 +41,6 @@ async def _update_db(db_id: str, status: str, wp_url: str = ""):
 
 async def _get_publish_delay_seconds() -> int:
     try:
-        from db.connection import get_db
-        from sqlalchemy import text
         async with get_db() as db:
             result = await db.execute(
                 text("SELECT value FROM app_settings WHERE key = 'delay_between_posts'")

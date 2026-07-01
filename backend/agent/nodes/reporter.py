@@ -5,6 +5,8 @@ Envoie le rapport formaté via Gmail API.
 """
 from agent.state import KoraState
 from core.logger import logger
+from db.connection import get_db
+from sqlalchemy import text
 
 
 _REPORT_TEMPLATE = """
@@ -67,8 +69,6 @@ _REPORT_TEMPLATE = """
 async def _update_cycle_db(cycle_id: str, published_count: int, selected_count: int):
     """Met à jour le cycle en base. Extracté pour faciliter les mocks."""
     try:
-        from db.connection import get_db
-        from sqlalchemy import text
         async with get_db() as db:
             await db.execute(
                 text("""
@@ -93,8 +93,6 @@ async def run(state: KoraState) -> KoraState:
     # Récupère les articles publiés de ce cycle depuis Supabase
     articles_rows = []
     try:
-        from db.connection import get_db
-        from sqlalchemy import text
         async with get_db() as db:
             result = await db.execute(
                 text("""

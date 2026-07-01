@@ -17,6 +17,8 @@ from typing import List
 from agent.state import KoraState
 from core.llm_router import llm_router
 from core.logger import logger
+from db.connection import get_db
+from sqlalchemy import text
 
 _PANAFRICAN_DOMAINS = {
     "jeuneafrique.com", "rfi.fr", "bbc.com", "bbc.co.uk", "africanews.com",
@@ -41,8 +43,6 @@ def _domain_of(url: str) -> str:
 async def _load_trusted_domains() -> set:
     """Domaines actifs dans rss_sources — sources Niveau 1, curées par l'utilisateur."""
     try:
-        from db.connection import get_db
-        from sqlalchemy import text
         async with get_db() as db:
             result = await db.execute(text("SELECT url FROM rss_sources WHERE is_active = true"))
             rows = result.mappings().all()

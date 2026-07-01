@@ -37,8 +37,6 @@ services:
         value: "groq,gemini,cerebras,openrouter"
       - key: LLM_PRIMARY_MODEL
         value: "groq/llama-3.3-70b-versatile"
-      - key: IMAGE_GEN_PROVIDER
-        value: "pollinations"
       - key: APP_BASE_URL
         value: "https://kora-582m5.ondigitalocean.app"
       - key: QSTASH_URL

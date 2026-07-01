@@ -8,6 +8,8 @@ import asyncio
 from typing import List
 from agent.state import KoraState
 from core.logger import logger
+from db.connection import get_db
+from sqlalchemy import text
 
 
 # Requêtes de secours si aucune source RSS n'est configurée en base
@@ -21,8 +23,6 @@ _FALLBACK_QUERIES = [
 async def _load_sources_from_db() -> list[str]:
     """Charge les URLs RSS actives depuis la table rss_sources."""
     try:
-        from db.connection import get_db
-        from sqlalchemy import text
         async with get_db() as db:
             result = await db.execute(
                 text("SELECT url FROM rss_sources WHERE is_active = true ORDER BY name")

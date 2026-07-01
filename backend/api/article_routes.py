@@ -132,6 +132,45 @@ async def _publish_to_wp(article: dict):
             )
 
 
+@router.post("/{article_id}/regenerate-image")
+async def regenerate_image(article_id: str):
+    """
+    Régénère l'illustration d'un article avant publication (HITL) — l'utilisateur
+    peut demander une nouvelle image depuis l'éditeur si celle générée automatiquement
+    ne convient pas. Ne fonctionne que sur un article pas encore publié.
+    """
+    async with get_db() as db:
+        result = await db.execute(
+            text("SELECT id, titre, image_prompt, status FROM articles WHERE id = :id"),
+            {"id": article_id},
+        )
+        row = result.mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Article not found")
+    if row["status"] == "PUBLISHED":
+        raise HTTPException(status_code=400, detail="Article déjà publié — image non modifiable")
+
+    from agent.nodes.illustrator import generate_and_upload_image
+    try:
+        image_url, wp_media_id, wp_image_src = await generate_and_upload_image(
+            row["image_prompt"] or f"Journalistic photo for article: {row['titre']}",
+            row["titre"],
+        )
+    except Exception as e:
+        logger.error("regenerate_image_failed", article_id=article_id, error=str(e))
+        raise HTTPException(status_code=502, detail=f"Échec de la régénération d'image : {e}")
+
+    async with get_db() as db:
+        await db.execute(
+            text("UPDATE articles SET image_url = :url, wp_media_id = :mid WHERE id = :id"),
+            {"url": wp_image_src or image_url, "mid": wp_media_id, "id": article_id},
+        )
+
+    logger.info("image_regenerated", article_id=article_id, wp_media_id=wp_media_id)
+    return {"image_url": wp_image_src or image_url, "wp_media_id": wp_media_id}
+
+
 @router.post("/{article_id}/reject")
 async def reject_article(article_id: str):
     async with get_db() as db:

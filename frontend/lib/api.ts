@@ -51,6 +51,8 @@ export const articleApi = {
     request<{ status: string }>(`/api/articles/${id}/reject`, { method: 'POST' }),
   delete: (id: string) =>
     request<void>(`/api/articles/${id}`, { method: 'DELETE' }),
+  regenerateImage: (id: string) =>
+    request<{ image_url: string; wp_media_id: number }>(`/api/articles/${id}/regenerate-image`, { method: 'POST' }),
 }
 
 // ── Cycles ───────────────────────────────────────────────────────────────────
