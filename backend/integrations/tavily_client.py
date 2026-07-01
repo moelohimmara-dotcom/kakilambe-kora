@@ -10,20 +10,26 @@ class TavilyClient:
     def __init__(self):
         self.api_key = settings.TAVILY_API_KEY
 
-    async def search(self, query: str, max_results: int = 10) -> List[dict]:
+    async def search(
+        self,
+        query: str,
+        max_results: int = 10,
+        search_depth: str = "advanced",
+        timeout: float = 20,
+    ) -> List[dict]:
         """Appel direct à l'API Tavily via httpx — évite la dépendance cohere du SDK."""
         if not self.api_key:
             logger.error("tavily_no_api_key")
             return []
         try:
-            async with httpx.AsyncClient(timeout=20) as client:
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 r = await client.post(
                     _TAVILY_API_URL,
                     json={
                         "api_key": self.api_key,
                         "query": query,
                         "max_results": max_results,
-                        "search_depth": "advanced",
+                        "search_depth": search_depth,
                         "include_raw_content": False,
                     },
                 )

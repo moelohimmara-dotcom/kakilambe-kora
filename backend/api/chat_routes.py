@@ -65,7 +65,10 @@ async def _execute_tool_call(name: str, arguments: dict) -> str:
 
     from integrations.tavily_client import tavily_client
     query = arguments.get("query") or "actualité Guinée Conakry"
-    results = await tavily_client.search(query, max_results=5)
+    # search_depth="basic" + timeout court : le chat a besoin d'une réponse rapide
+    # (contrainte gateway DigitalOcean ~60s), contrairement au pipeline éditorial
+    # qui peut se permettre "advanced" en tâche de fond.
+    results = await tavily_client.search(query, max_results=4, search_depth="basic", timeout=10)
 
     logger.info("chat_tool_call_executed", tool=name, query=query, results_count=len(results))
 
@@ -114,7 +117,10 @@ async def _run_tool_loop(messages: list, temperature: float, max_tokens: int, fo
         decision = await llm_router.complete(
             messages=messages,
             temperature=temperature,
-            max_tokens=max_tokens,
+            # La décision n'a besoin que d'émettre un appel d'outil, pas une réponse
+            # complète — plafonné bas pour ne pas payer la latence de max_tokens=2048
+            # deux fois dans le même aller-retour HTTP (contrainte gateway DO ~60s).
+            max_tokens=min(max_tokens, 150),
             tools=[_WEB_SEARCH_TOOL],
             tool_choice=tool_choice,
         )
