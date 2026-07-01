@@ -33,11 +33,6 @@ class WordPressClient:
             auth = base64.b64encode(f"{self._username_env}:{self._password_env}".encode()).decode()
             return base_url, auth
 
-    @property
-    def _headers_sync(self) -> dict:
-        auth = base64.b64encode(f"{self._username_env}:{self._password_env}".encode()).decode()
-        return {"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
-
     async def _headers(self) -> dict:
         _, auth = await self._get_credentials()
         return {"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
@@ -50,6 +45,31 @@ class WordPressClient:
             r.raise_for_status()
             data = r.json()
             return {"ok": True, "user": data.get("name"), "id": data.get("id")}
+
+    async def list_categories(self) -> list[dict]:
+        """Catégories réelles définies sur le site WordPress (id, name, slug)."""
+        base_url, auth = await self._get_credentials()
+        headers = {"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
+        categories: list[dict] = []
+        page = 1
+        async with httpx.AsyncClient(timeout=15) as client:
+            while True:
+                r = await client.get(
+                    f"{base_url}/wp-json/wp/v2/categories",
+                    headers=headers,
+                    params={"per_page": 100, "page": page},
+                )
+                if r.status_code == 400:  # page au-delà du total — fin de pagination WP
+                    break
+                r.raise_for_status()
+                batch = r.json()
+                if not batch:
+                    break
+                categories.extend({"wp_id": c["id"], "name": c["name"], "slug": c["slug"]} for c in batch)
+                if len(batch) < 100:
+                    break
+                page += 1
+        return categories
 
     async def publish_post(self, article: dict) -> str:
         base_url, auth = await self._get_credentials()

@@ -63,11 +63,13 @@ Réponds UNIQUEMENT en JSON valide, format exact :
 }}
 """
 
-# ── Résolution déterministe de la catégorie WordPress ────────────────────────
-# IDs confirmés : Politique=4, Économie=5. Les autres libellés retombent sur le
-# défaut (44) tant que leurs IDs réels ne sont pas communiqués — mieux vaut une
-# catégorie par défaut correcte qu'un ID halluciné sur le site live.
-_CATEGORY_MAP = {
+# ── Résolution de la catégorie WordPress ──────────────────────────────────────
+# Source de vérité : table wp_categories (synchronisée depuis l'API WordPress
+# réelle via /api/settings/wp-categories/sync, mappée aux 7 libellés dans
+# Settings → Catégories). Repli sur les IDs codés en dur si la DB est
+# indisponible ou si aucune catégorie n'est encore mappée — mieux vaut une
+# catégorie par défaut correcte qu'un cycle bloqué sur une panne secondaire.
+_CATEGORY_MAP_FALLBACK = {
     "politique": 4,
     "economie":  5,
 }
@@ -75,9 +77,23 @@ _DEFAULT_CATEGORY_ID = 44
 _ACCENT_MAP = str.maketrans("àâäéèêëîïôöùûüç", "aaaeeeeiioouuuc")
 
 
-def _resolve_category_id(label: str) -> int:
-    normalized = (label or "").strip().lower().translate(_ACCENT_MAP)
-    return _CATEGORY_MAP.get(normalized, _DEFAULT_CATEGORY_ID)
+async def _resolve_category_id(label: str) -> int:
+    if not label:
+        return _DEFAULT_CATEGORY_ID
+    try:
+        async with get_db() as db:
+            result = await db.execute(
+                text("SELECT wp_id FROM wp_categories WHERE kora_label = :label LIMIT 1"),
+                {"label": label},
+            )
+            row = result.mappings().first()
+        if row:
+            return row["wp_id"]
+    except Exception as e:
+        logger.warning("category_db_lookup_failed", label=label, error=str(e))
+
+    normalized = label.strip().lower().translate(_ACCENT_MAP)
+    return _CATEGORY_MAP_FALLBACK.get(normalized, _DEFAULT_CATEGORY_ID)
 
 def _build_sources_section(article: dict) -> tuple[str, str, str]:
     """Retourne (sources_section, url_principale, source_nom)."""
@@ -133,13 +149,14 @@ async def _write_with_retry(article: dict) -> ArticleKORA:
             data = json.loads(raw)
 
             # Validation Pydantic — catégorie résolue en Python, jamais devinée par le LLM
+            category_id = await _resolve_category_id(data.get("categorie_label", ""))
             article_obj = ArticleKORA(
                 titre=data.get("titre", titre)[:70],
                 chapeau=data.get("chapeau", ""),
                 corps=data.get("corps", ""),
                 meta_description=data.get("meta_description", "")[:155],
                 mots_cles=data.get("mots_cles", [])[:5],
-                categorie_wp_id=_resolve_category_id(data.get("categorie_label", "")),
+                categorie_wp_id=category_id,
                 source_url=url,
                 source_nom=source_nom,
                 image_prompt=data.get("image_prompt", f"Journalistic photo for article: {titre}"),

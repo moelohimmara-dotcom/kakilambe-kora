@@ -9,17 +9,22 @@ import { Spinner } from '@/components/ui/Spinner'
 import { useAsync, useMutation } from '@/lib/hooks'
 import { useToast } from '@/lib/contexts/ToastContext'
 import { settingsApi, providerApi, healthApi } from '@/lib/api'
-import type { SystemPrompt, Provider, AppSettings } from '@/lib/types'
+import type { SystemPrompt, Provider, AppSettings, WpCategory, KoraCategoryLabel } from '@/lib/types'
 
-type Tab = 'wordpress' | 'prompts' | 'providers'
+type Tab = 'wordpress' | 'categories' | 'prompts' | 'providers'
+
+const KORA_LABELS: KoraCategoryLabel[] = [
+  'Politique', 'Économie', 'Société', 'Sport', 'Culture', 'Sécurité', 'International',
+]
 
 export function SettingsScreen() {
   const [tab, setTab] = useState<Tab>('wordpress')
 
   const TABS: { key: Tab; label: string }[] = [
-    { key: 'wordpress', label: 'WordPress' },
-    { key: 'prompts',   label: 'Prompts système' },
-    { key: 'providers', label: 'Fournisseurs LLM' },
+    { key: 'wordpress',  label: 'WordPress' },
+    { key: 'categories', label: 'Catégories' },
+    { key: 'prompts',    label: 'Prompts système' },
+    { key: 'providers',  label: 'Fournisseurs LLM' },
   ]
 
   return (
@@ -52,6 +57,7 @@ export function SettingsScreen() {
 
       <div id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${tab}`}>
         {tab === 'wordpress' && <WordPressTab />}
+        {tab === 'categories' && <CategoriesTab />}
         {tab === 'prompts' && <PromptsTab />}
         {tab === 'providers' && <ProvidersTab />}
       </div>
@@ -170,6 +176,92 @@ function WordPressTab() {
             />
           </Field>
         </div>
+      </Card>
+    </div>
+  )
+}
+
+// ── Catégories Tab ────────────────────────────────────────────────────────────
+// Remplace les IDs codés en dur dans writer.py : synchronise les vraies
+// catégories WordPress puis laisse l'utilisateur les associer aux 7 libellés
+// éditoriaux fixes utilisés par l'agent.
+
+function CategoriesTab() {
+  const { show } = useToast()
+  const fetchCategories = useCallback(() => settingsApi.wpCategories(), [])
+  const { data: categories, loading, refetch } = useAsync<WpCategory[]>(fetchCategories)
+
+  const { mutate: sync, loading: syncing } = useMutation(async () => {
+    const result = await settingsApi.syncWpCategories() as { synced: number }
+    show(`${result.synced} catégorie(s) synchronisée(s) depuis WordPress`, 'success')
+    await refetch()
+  })
+
+  const { mutate: setMapping } = useMutation(async ({ wpId, label }: { wpId: number; label: string | null }) => {
+    await settingsApi.updateWpCategoryMapping(wpId, label)
+    await refetch()
+  })
+
+  const list = categories ?? []
+  const mappedLabels = new Set(list.map(c => c.kora_label).filter(Boolean))
+  const unmapped = KORA_LABELS.filter(l => !mappedLabels.has(l))
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="font-heading font-semibold text-[14px] text-anthracite">
+              Synchronisation WordPress
+            </h2>
+            <p className="font-heading text-[12px] text-gray-dk mt-0.5">
+              Récupère les vraies catégories de kakilambe.com et les associe aux libellés éditoriaux de KORA.
+            </p>
+          </div>
+          <Button variant="primary" size="sm" loading={syncing} onClick={() => sync(undefined as unknown as void)}>
+            Synchroniser
+          </Button>
+        </div>
+
+        {unmapped.length > 0 && list.length > 0 && (
+          <div className="mb-4 px-3 py-2 rounded-md bg-warning/10 border border-warning/30">
+            <p className="font-heading text-[12px] text-anthracite">
+              Non mappés (retombent sur la catégorie par défaut) : {unmapped.join(', ')}
+            </p>
+          </div>
+        )}
+
+        {loading ? (
+          <div className="flex justify-center py-8"><Spinner /></div>
+        ) : list.length === 0 ? (
+          <div className="empty-state py-8">
+            <p className="font-heading text-[13px] text-gray-dk">
+              Aucune catégorie synchronisée. Cliquez sur « Synchroniser » pour récupérer celles de WordPress.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {list.map(cat => (
+              <div key={cat.wp_id} className="flex items-center justify-between gap-4 px-3 py-2.5 rounded-md bg-gray-pale">
+                <div className="min-w-0">
+                  <span className="font-heading text-[13px] font-medium text-anthracite">{cat.name}</span>
+                  <span className="font-mono text-[10px] text-gray-med ml-2">#{cat.wp_id}</span>
+                </div>
+                <select
+                  value={cat.kora_label ?? ''}
+                  onChange={e => setMapping({ wpId: cat.wp_id, label: e.target.value || null })}
+                  className="form-input w-48 shrink-0"
+                  aria-label={`Libellé KORA pour ${cat.name}`}
+                >
+                  <option value="">— Non mappée —</option>
+                  {KORA_LABELS.map(label => (
+                    <option key={label} value={label}>{label}</option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        )}
       </Card>
     </div>
   )

@@ -116,6 +116,14 @@ export const settingsApi = {
     request(`/api/settings/sources/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteSource: (id: string) =>
     request(`/api/settings/sources/${id}`, { method: 'DELETE' }),
+  wpCategories: () => request<import('./types').WpCategory[]>('/api/settings/wp-categories'),
+  syncWpCategories: () =>
+    request<{ synced: number }>('/api/settings/wp-categories/sync', { method: 'POST' }),
+  updateWpCategoryMapping: (wpId: number, koraLabel: string | null) =>
+    request<import('./types').WpCategory>(`/api/settings/wp-categories/${wpId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ kora_label: koraLabel }),
+    }),
 }
 
 // ── Health ────────────────────────────────────────────────────────────────────

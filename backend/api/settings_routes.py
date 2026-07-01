@@ -199,3 +199,86 @@ async def test_email():
         raise HTTPException(status_code=500, detail=f"Échec envoi email : {last_error[0]}")
 
     return {"sent": True, "to": settings.GMAIL_RECIPIENT, "provider": "resend" if resend_key else "smtp"}
+
+
+# ── Catégories WordPress (item 8 — synchronisation dynamique) ────────────────
+# Remplace les IDs codés en dur dans writer.py par un mapping réel, synchronisé
+# depuis l'API WordPress, éditable par l'utilisateur dans /settings.
+
+_KORA_LABELS = ["Politique", "Économie", "Société", "Sport", "Culture", "Sécurité", "International"]
+_ACCENT_MAP = str.maketrans("àâäéèêëîïôöùûüç", "aaaeeeeiioouuuc")
+
+
+def _norm(s: str) -> str:
+    return (s or "").strip().lower().translate(_ACCENT_MAP)
+
+
+class CategoryMappingPatch(BaseModel):
+    kora_label: Optional[str] = None  # None = retire le mapping
+
+
+@router.post("/wp-categories/sync")
+async def sync_wp_categories():
+    """
+    Récupère les vraies catégories du site WordPress et les synchronise en
+    base. Auto-associe un libellé KORA si le nom correspond exactement
+    (insensible à la casse/accents) ; ne touche jamais un mapping déjà
+    défini manuellement par l'utilisateur.
+    """
+    from integrations.wordpress_client import wp_client
+    try:
+        categories = await wp_client.list_categories()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Échec de synchronisation WordPress : {e}")
+
+    label_by_norm = {_norm(label): label for label in _KORA_LABELS}
+
+    synced = 0
+    async with get_db() as db:
+        for cat in categories:
+            existing = await db.execute(
+                text("SELECT kora_label FROM wp_categories WHERE wp_id = :wp_id"),
+                {"wp_id": cat["wp_id"]},
+            )
+            row = existing.mappings().first()
+            auto_label = None if row else label_by_norm.get(_norm(cat["name"]))
+
+            await db.execute(
+                text("""
+                    INSERT INTO wp_categories (wp_id, name, slug, kora_label, synced_at)
+                    VALUES (:wp_id, :name, :slug, :auto_label, now())
+                    ON CONFLICT (wp_id) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        slug = EXCLUDED.slug,
+                        synced_at = now()
+                """),
+                {"wp_id": cat["wp_id"], "name": cat["name"], "slug": cat["slug"], "auto_label": auto_label},
+            )
+            synced += 1
+
+    return {"synced": synced, "categories": categories}
+
+
+@router.get("/wp-categories")
+async def list_wp_categories():
+    async with get_db() as db:
+        result = await db.execute(
+            text("SELECT wp_id, name, slug, kora_label, synced_at FROM wp_categories ORDER BY name")
+        )
+        rows = result.mappings().all()
+    return [dict(r) for r in rows]
+
+
+@router.patch("/wp-categories/{wp_id}")
+async def update_wp_category_mapping(wp_id: int, body: CategoryMappingPatch):
+    if body.kora_label is not None and body.kora_label not in _KORA_LABELS:
+        raise HTTPException(status_code=400, detail=f"kora_label doit être l'un de {_KORA_LABELS}")
+
+    async with get_db() as db:
+        result = await db.execute(
+            text("UPDATE wp_categories SET kora_label = :label WHERE wp_id = :wp_id RETURNING wp_id"),
+            {"label": body.kora_label, "wp_id": wp_id},
+        )
+        if not result.first():
+            raise HTTPException(status_code=404, detail="Catégorie non trouvée — synchronisez d'abord")
+    return {"wp_id": wp_id, "kora_label": body.kora_label}

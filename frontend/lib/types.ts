@@ -93,6 +93,17 @@ export interface KpiData {
   next_cycle_hour: string
 }
 
+export type KoraCategoryLabel =
+  | 'Politique' | 'Économie' | 'Société' | 'Sport' | 'Culture' | 'Sécurité' | 'International'
+
+export interface WpCategory {
+  wp_id: number
+  name: string
+  slug: string
+  kora_label: KoraCategoryLabel | null
+  synced_at: string
+}
+
 export interface AppSettings {
   wp_url?: string
   wp_username?: string
