@@ -333,21 +333,36 @@ class KoraLLMRouter:
         self, providers: list[str], messages, temperature, max_tokens, response_format, tools, tool_choice
     ):
         """
-        Générateur async : tente chaque provider, valide en tirant le PREMIER
-        chunk avant de s'engager (c'est à ce moment que les erreurs HTTP comme
-        un 429 remontent réellement pour un appel streamé côté litellm) — si ça
-        échoue, passe au provider suivant de façon invisible pour l'appelant.
+        Générateur async : tente chaque provider, en tamponnant les chunks SANS
+        rien céder à l'appelant tant qu'aucun contenu réel n'a été reçu.
+
+        Un seul "premier chunk" ne suffit pas : certains providers (Gemini
+        notamment) renvoient un chunk initial vide/métadonnée avant que l'échec
+        réel (ex. clé API invalide) ne survienne sur un chunk suivant. Tant que
+        rien n'a été cédé au client, un échec à n'importe quel stade du
+        tampon reste invisible et permet de basculer vers le provider suivant.
+        Une fois qu'un chunk avec du contenu réel arrive, on s'engage : on cède
+        tout le tampon puis on continue de streamer normalement.
         """
         last_err = None
         for provider in providers:
             params = self._build_params(provider, messages, temperature, max_tokens, True, response_format, tools, tool_choice)
+            buffered = []
             try:
                 response = await litellm.acompletion(**params)
                 stream_iter = response.__aiter__()
-                first_chunk = await stream_iter.__anext__()
-            except StopAsyncIteration:
-                await self._mark_success(provider)
-                return
+                async for chunk in stream_iter:
+                    buffered.append(chunk)
+                    delta = chunk.choices[0].delta if chunk.choices else None
+                    if delta and getattr(delta, "content", None):
+                        break
+                else:
+                    # Flux terminé sans qu'aucun chunk n'ait de contenu réel —
+                    # complétion vide légitime (pas un échec à retenter).
+                    await self._mark_success(provider)
+                    for c in buffered:
+                        yield c
+                    return
             except Exception as e:
                 last_err = e
                 should_continue = await self._handle_failure(provider, e)
@@ -357,7 +372,8 @@ class KoraLLMRouter:
 
             await self._mark_success(provider)
             logger.info("llm_success", provider=provider, model=params["model"], streaming=True)
-            yield first_chunk
+            for c in buffered:
+                yield c
             async for chunk in stream_iter:
                 yield chunk
             return
