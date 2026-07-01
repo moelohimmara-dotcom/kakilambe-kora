@@ -22,6 +22,7 @@ from api.article_routes import router as article_router
 from api.cycle_routes import router as cycle_router
 from api.provider_routes import router as provider_router
 from api.settings_routes import router as settings_router
+from api.webhook_routes import router as webhook_router
 
 
 @asynccontextmanager
@@ -64,6 +65,7 @@ app.include_router(article_router,  prefix="/api/articles", tags=["articles"])
 app.include_router(cycle_router,    prefix="/api/cycles",   tags=["cycles"])
 app.include_router(provider_router, prefix="/api/providers",tags=["providers"])
 app.include_router(settings_router, prefix="/api/settings", tags=["settings"])
+app.include_router(webhook_router,  prefix="/api/webhooks", tags=["webhooks"])
 
 @app.get("/health", tags=["system"])
 async def health():
@@ -161,3 +163,12 @@ async def health_fal():
     if not settings.IMAGE_GEN_API_KEY:
         return {"status": "error", "detail": "IMAGE_GEN_API_KEY not configured"}
     return {"status": "ok", "detail": "fal.ai key present"}
+
+@app.get("/health/qstash", tags=["system"])
+async def health_qstash():
+    from integrations.qstash_client import qstash_client
+    if not qstash_client.configured:
+        return {"status": "error", "detail": "QSTASH_TOKEN not configured"}
+    if not settings.QSTASH_CURRENT_SIGNING_KEY:
+        return {"status": "error", "detail": "QSTASH_CURRENT_SIGNING_KEY not configured"}
+    return {"status": "ok", "detail": "QStash token and signing key present"}

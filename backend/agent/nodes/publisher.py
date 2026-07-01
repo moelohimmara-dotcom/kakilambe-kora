@@ -2,10 +2,19 @@
 NŒUD 5 — publish_wordpress
 Publie l'article validé sur WordPress via REST API v2.
 Met à jour Supabase : status PUBLISHED + wp_url.
-Upstash queue : délai 2h avant prochain article.
+
+Espacement des publications (QStash) : le premier article d'un cycle publie
+immédiatement (chemin synchrone existant, éprouvé). Les suivants sont enfilés
+via Upstash QStash avec un délai croissant (index * delay_between_posts) pour
+éviter de publier plusieurs articles d'affilée sur WordPress — remplace
+l'ancien `_queue_delay()` qui enregistrait un timestamp jamais exploité.
+Si QStash n'est pas configuré ou échoue, repli automatique sur la publication
+directe : un souci d'infrastructure secondaire ne doit jamais bloquer un cycle.
 """
 from agent.state import KoraState
 from core.logger import logger
+
+_DEFAULT_DELAY_SECONDS = 120
 
 
 async def _update_db(db_id: str, status: str, wp_url: str = ""):
@@ -30,6 +39,20 @@ async def _update_db(db_id: str, status: str, wp_url: str = ""):
         logger.warning("publisher_db_update_failed", status=status, error=str(e))
 
 
+async def _get_publish_delay_seconds() -> int:
+    try:
+        from db.connection import get_db
+        from sqlalchemy import text
+        async with get_db() as db:
+            result = await db.execute(
+                text("SELECT value FROM app_settings WHERE key = 'delay_between_posts'")
+            )
+            row = result.mappings().first()
+        return int(row["value"]) if row and row["value"] else _DEFAULT_DELAY_SECONDS
+    except Exception:
+        return _DEFAULT_DELAY_SECONDS
+
+
 async def run(state: KoraState) -> KoraState:
     article = state.get("generated_article")
     if not article:
@@ -38,10 +61,42 @@ async def run(state: KoraState) -> KoraState:
         return {**state, "article_index": idx + 1}
 
     db_id = article.get("db_id", "")
-    logger.info("node_publisher_start", cycle_id=state["cycle_id"], db_id=db_id)
+    idx = state.get("article_index", 0)
+    logger.info("node_publisher_start", cycle_id=state["cycle_id"], db_id=db_id, index=idx)
 
     await _update_db(db_id, "PENDING_REVIEW")
 
+    delay_seconds = await _get_publish_delay_seconds()
+
+    if idx == 0 or delay_seconds <= 0:
+        return await _publish_now(state, article, db_id, idx)
+
+    from integrations.qstash_client import qstash_client
+    message_id = await qstash_client.publish_delayed(
+        "/api/webhooks/qstash/publish-article",
+        {"article_id": db_id},
+        delay_seconds=idx * delay_seconds,
+    )
+    if message_id:
+        logger.info(
+            "node_publisher_queued",
+            cycle_id=state["cycle_id"], db_id=db_id,
+            delay=idx * delay_seconds, message_id=message_id,
+        )
+        return {
+            **state,
+            "article_index": idx + 1,
+            "generated_article": None,
+            "image_url": None,
+            "wp_media_id": None,
+        }
+
+    logger.warning("node_publisher_qstash_fallback", cycle_id=state["cycle_id"], db_id=db_id)
+    return await _publish_now(state, article, db_id, idx)
+
+
+async def _publish_now(state: KoraState, article: dict, db_id: str, idx: int) -> KoraState:
+    """Publication WordPress directe et synchrone — chemin historique éprouvé."""
     try:
         from integrations.wordpress_client import wp_client
 
@@ -50,7 +105,6 @@ async def run(state: KoraState) -> KoraState:
         await _update_db(db_id, "PUBLISHED", wp_url)
 
         published_count = state.get("published_count", 0) + 1
-        idx = state.get("article_index", 0)
 
         logger.info(
             "node_publisher_done",
@@ -58,8 +112,6 @@ async def run(state: KoraState) -> KoraState:
             wp_url=wp_url,
             published_count=published_count,
         )
-
-        await _queue_delay()
 
         return {
             **state,
@@ -78,20 +130,9 @@ async def run(state: KoraState) -> KoraState:
 
         await _update_db(db_id, "FAILED")
 
-        idx = state.get("article_index", 0)
         return {
             **state,
             "errors": errors,
             "article_index": idx + 1,
             "generated_article": None,
         }
-
-
-_last_publish_ts: float = 0.0
-
-
-async def _queue_delay():
-    """Enregistre le timestamp du dernier publish en mémoire (no-op si conteneur redémarre)."""
-    import time
-    global _last_publish_ts
-    _last_publish_ts = time.time()

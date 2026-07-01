@@ -59,6 +59,17 @@ class Settings(BaseSettings):
     CYCLE_HOUR: int = 6
     CYCLE_TIMEZONE: str = "Africa/Conakry"
 
+    # ── QStash (file d'attente Upstash pour publications différées/retries) ───
+    QSTASH_TOKEN: str = ""
+    QSTASH_CURRENT_SIGNING_KEY: str = ""
+    QSTASH_NEXT_SIGNING_KEY: str = ""
+    # Endpoint régional (ex. EU : https://qstash-eu-central-1.upstash.io) —
+    # le SDK n'utilise l'endpoint générique que si celui-ci n'est pas fourni.
+    QSTASH_URL: str = "https://qstash.upstash.io"
+    # URL publique du backend — nécessaire pour que QStash sache où renvoyer
+    # le webhook (il ne peut pas appeler localhost).
+    APP_BASE_URL: str = "https://kora-582m5.ondigitalocean.app"
+
     # ── Security ─────────────────────────────────────────────────────────────
     API_SECRET_KEY: str = ""
     ADMIN_SECRET_KEY: str = ""

@@ -39,6 +39,10 @@ services:
         value: "groq/llama-3.3-70b-versatile"
       - key: IMAGE_GEN_PROVIDER
         value: "pollinations"
+      - key: APP_BASE_URL
+        value: "https://kora-582m5.ondigitalocean.app"
+      - key: QSTASH_URL
+        value: "https://qstash-eu-central-1.upstash.io"
       # ── Secrets : à renseigner dans le Dashboard DO (onglet Environment Variables)
       - key: GROQ_API_KEY
         type: SECRET
@@ -59,6 +63,12 @@ services:
       - key: DATABASE_URL
         type: SECRET
       - key: REDIS_URL
+        type: SECRET
+      - key: QSTASH_TOKEN
+        type: SECRET
+      - key: QSTASH_CURRENT_SIGNING_KEY
+        type: SECRET
+      - key: QSTASH_NEXT_SIGNING_KEY
         type: SECRET
       - key: ALLOWED_ORIGINS
         value: "https://kakilambe.com,https://kora-frontend.ondigitalocean.app"
