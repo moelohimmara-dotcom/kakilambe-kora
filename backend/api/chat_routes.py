@@ -153,6 +153,7 @@ class ChatRequest(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 2048
     stream: bool = False
+    debug: bool = False  # inclut tool_used/tool_forced dans la réponse — usage QA uniquement
 
 
 class ImproveRequest(BaseModel):
@@ -220,7 +221,11 @@ async def chat(body: ChatRequest):
         await _persist_message(body.session_id, "user", last_user, title_candidate=last_user)
         await _persist_message(body.session_id, "assistant", content)
 
-    return {"role": "assistant", "content": content}
+    result = {"role": "assistant", "content": content}
+    if body.debug:
+        result["tool_used"] = tool_used
+        result["tool_forced"] = _is_news_query(last_user_text)
+    return result
 
 
 @router.post("/sessions")

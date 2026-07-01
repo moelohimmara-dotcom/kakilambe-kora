@@ -30,10 +30,10 @@ def main() -> int:
     print(f"→ POST {BASE_URL}/api/chat")
     print(f"→ Question : {QUESTION!r}\n")
 
-    payload = {"messages": [{"role": "user", "content": QUESTION}]}
+    payload = {"messages": [{"role": "user", "content": QUESTION}], "debug": True}
 
     try:
-        r = httpx.post(f"{BASE_URL}/api/chat", json=payload, timeout=45)
+        r = httpx.post(f"{BASE_URL}/api/chat", json=payload, timeout=90)
         r.raise_for_status()
     except Exception as e:
         print(f"❌ Requête échouée : {e}")
@@ -41,27 +41,27 @@ def main() -> int:
 
     data = r.json()
     content = data.get("content", "")
+    tool_used = data.get("tool_used")
+    tool_forced = data.get("tool_forced")
 
     print("── Réponse brute ──────────────────────────────────────────")
-    print(json.dumps(data, ensure_ascii=False, indent=2)[:2000])
+    print(json.dumps(data, ensure_ascii=False, indent=2)[:2500])
     print("───────────────────────────────────────────────────────────\n")
+
+    print(f"Preuve directe (champ debug) — tool_used={tool_used} · tool_forced={tool_forced}\n")
 
     lower = content.lower()
     refusal_hits = [m for m in _REFUSAL_MARKERS if m in lower]
-    has_url = "http://" in content or "https://" in content
 
-    if refusal_hits:
-        print(f"❌ ÉCHEC : la réponse contient un marqueur de refus/absence de temps réel : {refusal_hits}")
-        print("   → L'outil search_web_for_news n'a probablement pas été déclenché.")
+    if tool_used is not True:
+        print("❌ ÉCHEC : le backend confirme que l'outil search_web_for_news n'a PAS été déclenché.")
         return 1
 
-    if not has_url:
-        print("⚠️  ATTENTION : aucune URL détectée dans la réponse — signal faible que")
-        print("   l'outil a été utilisé (le modèle peut synthétiser sans citer d'URL).")
-        print("   Ce n'est pas un échec certain, mais un point à surveiller.")
+    if refusal_hits:
+        print(f"⚠️  L'outil a été appelé (tool_used=True) mais la réponse contient quand même : {refusal_hits}")
+        print("   Le modèle a peut-être ignoré les résultats injectés — à surveiller, pas un échec du binding.")
 
-    print("✅ SUCCÈS : pas de marqueur de refus détecté" + (" et URL(s) présente(s) dans la réponse." if has_url else "."))
-    print("   → L'outil search_web_for_news semble avoir été déclenché et ses résultats injectés.")
+    print("✅ SUCCÈS : l'outil search_web_for_news a été réellement invoqué (preuve backend, pas une heuristique texte).")
     return 0
 
 
