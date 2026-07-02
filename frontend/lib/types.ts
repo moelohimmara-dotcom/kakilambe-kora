@@ -73,6 +73,7 @@ export interface RSSSource {
   name: string
   url: string
   category?: string
+  source_level: number
   is_active: boolean
   last_synced?: string
   error_count: number

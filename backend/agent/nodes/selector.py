@@ -6,9 +6,12 @@ Deux passes LLM :
      → Les sujets couverts par plusieurs sources sont fusionnés en un article enrichi.
 
 Priorisation des sources (déterministe, pas laissée au jugement seul du LLM) :
-  Niveau 1 — domaines actifs dans la table rss_sources (sources guinéennes vérifiées par l'utilisateur)
-  Niveau 2 — médias panafricains/internationaux de référence (liste fixe ci-dessous)
-  Niveau 3 — tout le reste
+  Niveau 1 — sources guinéennes vérifiées (rss_sources.source_level = 1) —
+             jamais filtrées par pertinence, tout leur contenu concerne la Guinée.
+  Niveau 2 — médias panafricains de référence (rss_sources.source_level = 2) —
+             filtre thématique STRICT : ne passent que s'ils mentionnent
+             explicitement la Guinée/l'Afrique de l'Ouest.
+  Niveau 3 — tout le reste (résultats Tavily hors sources curées) — même filtre strict.
 Note : pas de règle ".gn" — les médias guinéens réels (africaguinee.com, ledjely.com...)
 utilisent des domaines .com, pas l'extension .gn.
 """
@@ -19,11 +22,6 @@ from core.llm_router import llm_router
 from core.logger import logger
 from db.connection import get_db
 from sqlalchemy import text
-
-_PANAFRICAN_DOMAINS = {
-    "jeuneafrique.com", "rfi.fr", "bbc.com", "bbc.co.uk", "africanews.com",
-    "lemonde.fr", "apanews.net", "afrik.com", "voaafrique.com", "dw.com",
-}
 
 _GUINEA_KEYWORDS = (
     "guinee", "guinée", "guinea", "conakry", "kankan", "labe", "nzerekore",
@@ -40,24 +38,39 @@ def _domain_of(url: str) -> str:
         return ""
 
 
-async def _load_trusted_domains() -> set:
-    """Domaines actifs dans rss_sources — sources Niveau 1, curées par l'utilisateur."""
+async def _load_source_tiers() -> dict:
+    """Charge le niveau (1=Guinée, 2=Panafricain) des sources actives depuis rss_sources."""
     try:
         async with get_db() as db:
-            result = await db.execute(text("SELECT url FROM rss_sources WHERE is_active = true"))
+            result = await db.execute(
+                text("SELECT url, source_level FROM rss_sources WHERE is_active = true")
+            )
             rows = result.mappings().all()
-        return {_domain_of(r["url"]) for r in rows if r["url"]}
+        return {_domain_of(r["url"]): r["source_level"] for r in rows if r["url"]}
     except Exception as e:
-        logger.warning("selector_trusted_domains_failed", error=str(e))
-        return set()
+        logger.warning("selector_source_tiers_failed", error=str(e))
+        return {}
 
 
-def _source_tier(domain: str, trusted: set) -> int:
-    if domain in trusted:
-        return 1
-    if domain in _PANAFRICAN_DOMAINS:
-        return 2
-    return 3
+def _source_tier(domain: str, tiers: dict) -> int:
+    return tiers.get(domain, 3)
+
+
+async def _mark_raw_feeds_processed(batch_id: str, urls: list[str]) -> None:
+    """Marque les articles sélectionnés comme traités dans raw_feeds (best-effort)."""
+    if not urls:
+        return
+    try:
+        async with get_db() as db:
+            await db.execute(
+                text("""
+                    UPDATE raw_feeds SET is_processed = true
+                    WHERE batch_id = :batch_id AND source_url = ANY(:urls)
+                """),
+                {"batch_id": batch_id, "urls": urls},
+            )
+    except Exception as e:
+        logger.warning("selector_mark_processed_failed", batch_id=batch_id, error=str(e))
 
 
 def _is_guinea_relevant(article: dict) -> bool:
@@ -139,15 +152,16 @@ async def run(state: KoraState) -> KoraState:
         return {**state, "selected_articles": []}
 
     # ── Classification des sources (déterministe) ─────────────────────────────
-    trusted_domains = await _load_trusted_domains()
+    source_tiers = await _load_source_tiers()
     for a in raw:
         a["_domain"] = _domain_of(a.get("url", ""))
-        a["_tier"] = _source_tier(a["_domain"], trusted_domains)
+        a["_tier"] = _source_tier(a["_domain"], source_tiers)
 
-    # Filtre de pertinence : ne garde les sources Niveau 3 que si elles mentionnent
-    # explicitement la Guinée. N'écrase jamais la liste si le filtre la viderait
-    # entièrement (sécurité — évite un cycle sans aucun article).
-    filtered = [a for a in raw if a["_tier"] <= 2 or _is_guinea_relevant(a)]
+    # Filtre de pertinence strict : seul le Niveau 1 (Guinée, curé) passe sans
+    # condition — tout le reste (Niveau 2 panafricain compris) doit mentionner
+    # explicitement la Guinée/l'Afrique de l'Ouest. N'écrase jamais la liste si
+    # le filtre la viderait entièrement (sécurité — évite un cycle sans article).
+    filtered = [a for a in raw if a["_tier"] <= 1 or _is_guinea_relevant(a)]
     if filtered:
         raw = filtered
     else:
@@ -193,6 +207,7 @@ async def run(state: KoraState) -> KoraState:
     # ── Passe 2 : Déduplication sémantique + agrégation ───────────────────────
     if len(selected) < 2:
         # Pas assez d'articles pour dédupliquer
+        await _mark_raw_feeds_processed(state["cycle_id"], [a.get("url", "") for a in selected])
         return {**state, "selected_articles": selected, "article_index": 0}
 
     dedup_summaries = []
@@ -226,11 +241,14 @@ async def run(state: KoraState) -> KoraState:
             after=len(aggregated),
             dedup_summary=dedup_summary,
         )
+        processed_urls = [a.get("url", "") for a in selected]
+        await _mark_raw_feeds_processed(state["cycle_id"], processed_urls)
         return {**state, "selected_articles": aggregated, "article_index": 0}
 
     except Exception as e:
         logger.warning("node_selector_pass2_failed_fallback", error=str(e))
         # Fallback : pas de déduplication, on garde les sélectionnés bruts
+        await _mark_raw_feeds_processed(state["cycle_id"], [a.get("url", "") for a in selected])
         return {**state, "selected_articles": selected, "article_index": 0}
 
 

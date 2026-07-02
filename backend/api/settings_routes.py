@@ -22,12 +22,14 @@ class SourceCreate(BaseModel):
     name: str
     url: str
     category: Optional[str] = None
+    source_level: int = 2
 
 
 class SourcePatch(BaseModel):
     name: Optional[str] = None
     is_active: Optional[bool] = None
     category: Optional[str] = None
+    source_level: Optional[int] = None
 
 
 @router.get("")
@@ -109,7 +111,10 @@ async def update_prompt(prompt_id: str, body: PromptCreate):
 async def list_sources():
     async with get_db() as db:
         result = await db.execute(
-            text("SELECT id, name, url, category, is_active, last_synced, error_count FROM rss_sources ORDER BY name")
+            text("""
+                SELECT id, name, url, category, source_level, is_active, last_synced, error_count
+                FROM rss_sources ORDER BY source_level, name
+            """)
         )
         rows = result.mappings().all()
     return [dict(r) for r in rows]
@@ -119,8 +124,11 @@ async def list_sources():
 async def create_source(body: SourceCreate):
     async with get_db() as db:
         result = await db.execute(
-            text("INSERT INTO rss_sources (name, url, category) VALUES (:name, :url, :cat) RETURNING id"),
-            {"name": body.name, "url": body.url, "cat": body.category},
+            text("""
+                INSERT INTO rss_sources (name, url, category, source_level)
+                VALUES (:name, :url, :cat, :level) RETURNING id
+            """),
+            {"name": body.name, "url": body.url, "cat": body.category, "level": body.source_level},
         )
         source_id = result.scalar()
     return {"id": str(source_id), "created": True}

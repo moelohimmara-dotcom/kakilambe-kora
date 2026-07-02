@@ -20,19 +20,53 @@ _FALLBACK_QUERIES = [
 ]
 
 
-async def _load_sources_from_db() -> list[str]:
-    """Charge les URLs RSS actives depuis la table rss_sources."""
+def _domain_of(url: str) -> str:
+    try:
+        return url.split("/")[2].replace("www.", "").lower()
+    except IndexError:
+        return ""
+
+
+async def _load_sources_from_db() -> list[dict]:
+    """Charge les sources actives depuis rss_sources, avec leur niveau (1=Guinée, 2=Panafricain)."""
     try:
         async with get_db() as db:
             result = await db.execute(
-                text("SELECT url FROM rss_sources WHERE is_active = true ORDER BY name")
+                text("SELECT url, source_level FROM rss_sources WHERE is_active = true ORDER BY source_level, name")
             )
             rows = result.mappings().all()
-        urls = [r["url"] for r in rows if r["url"]]
-        return urls
+        return [{"url": r["url"], "level": r["source_level"]} for r in rows if r["url"]]
     except Exception as e:
         logger.warning("scraper_db_sources_failed", error=str(e))
         return []
+
+
+async def _persist_raw_feeds(batch_id: str, articles: list[dict]) -> None:
+    """
+    Journalise le lot brut ingéré dans raw_feeds — traçabilité de chaque
+    cycle et base pour un futur dédoublonnage inter-cycles. Best-effort :
+    une panne d'écriture ici ne doit jamais faire échouer le cycle.
+    """
+    if not articles:
+        return
+    try:
+        async with get_db() as db:
+            for a in articles:
+                await db.execute(
+                    text("""
+                        INSERT INTO raw_feeds (batch_id, source_url, source_name, title, content)
+                        VALUES (:batch_id, :source_url, :source_name, :title, :content)
+                    """),
+                    {
+                        "batch_id": batch_id,
+                        "source_url": a.get("url", ""),
+                        "source_name": _domain_of(a.get("url", "")),
+                        "title": (a.get("title") or "")[:500],
+                        "content": (a.get("markdown_content") or a.get("content", ""))[:5000],
+                    },
+                )
+    except Exception as e:
+        logger.warning("scraper_raw_feeds_persist_failed", batch_id=batch_id, error=str(e))
 
 _MAX_ARTICLES = 8      # réduit pour free tier (mémoire 512MB)
 _SCRAPE_TIMEOUT = 15   # secondes par URL
@@ -65,15 +99,24 @@ async def run(state: KoraState) -> KoraState:
 
     all_results: List[dict] = []
 
-    # 1a. Sources RSS depuis la DB (si configurées)
+    # 1a. Sources réelles depuis la DB — Niveau 1 (Guinée) sondé plus large
+    # que Niveau 2 (Panafricain), conformément à la priorité éditoriale
+    # appliquée ensuite par le selector (filtre de pertinence strict sur N2).
     db_sources = await _load_sources_from_db()
     if db_sources:
-        logger.info("scraper_using_db_sources", count=len(db_sources))
-        for url in db_sources:
+        logger.info(
+            "scraper_using_db_sources",
+            count=len(db_sources),
+            level1=sum(1 for s in db_sources if s["level"] == 1),
+            level2=sum(1 for s in db_sources if s["level"] == 2),
+        )
+        for source in db_sources:
+            url = source["url"]
+            max_results = 4 if source["level"] == 1 else 2
             try:
                 results = await tavily_client.search(
-                    f"site:{url.split('/')[2]} actualité Guinée",
-                    max_results=4,
+                    f"site:{_domain_of(url)} actualité Guinée",
+                    max_results=max_results,
                 )
                 all_results.extend(results)
             except Exception as e:
@@ -132,6 +175,8 @@ async def run(state: KoraState) -> KoraState:
         a for a in enriched
         if len((a.get("markdown_content") or a.get("content", "")).strip()) > 300
     ]
+
+    await _persist_raw_feeds(state["cycle_id"], valid)
 
     logger.info(
         "node_scraper_done",
