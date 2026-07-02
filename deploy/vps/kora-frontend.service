@@ -1,0 +1,16 @@
+[Unit]
+Description=KORA Frontend (Next.js)
+After=network.target kora-backend.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/kora/frontend
+Environment=PORT=3000
+Environment=NEXT_PUBLIC_API_URL=
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
