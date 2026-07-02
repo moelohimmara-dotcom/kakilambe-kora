@@ -5,6 +5,7 @@
 .env.production
 .env.*.local
 *.pem
+ACCES_ET_IDENTIFIANTS.md
 
 # ── Python ─────────────────────────────────────────────────────────────────────
 __pycache__/
