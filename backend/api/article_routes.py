@@ -28,7 +28,8 @@ async def list_articles(
             result = await db.execute(
                 text("""
                     SELECT id, titre, chapeau, status, origin, source_nom,
-                           created_at, published_at, wp_url,
+                           created_at, published_at, wp_url, image_url,
+                           mots_cles, categorie_id, cycle_id,
                            array_length(string_to_array(corps, ' '), 1) AS word_count
                     FROM articles
                     WHERE status = :status
@@ -45,7 +46,8 @@ async def list_articles(
             result = await db.execute(
                 text("""
                     SELECT id, titre, chapeau, status, origin, source_nom,
-                           created_at, published_at, wp_url,
+                           created_at, published_at, wp_url, image_url,
+                           mots_cles, categorie_id, cycle_id,
                            array_length(string_to_array(corps, ' '), 1) AS word_count
                     FROM articles
                     ORDER BY created_at DESC

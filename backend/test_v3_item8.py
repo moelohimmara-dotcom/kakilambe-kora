@@ -170,6 +170,27 @@ async def test_update_mapping_rejects_invalid_label():
     )
 
 
+def test_article_list_endpoint_selects_display_fields():
+    """
+    Bug réel trouvé lors du test end-to-end de l'item 8 : le SELECT de
+    GET /api/articles omettait image_url, mots_cles, categorie_id et
+    cycle_id. Conséquence en production : la page Articles affichait des
+    cartes sans vignette ni tags, et la carte HITL du dashboard (Phase 2)
+    perdait l'image de l'article en attente de validation.
+    """
+    import inspect
+    import api.article_routes as article_routes
+
+    source = inspect.getsource(article_routes.list_articles)
+    required_columns = ["image_url", "mots_cles", "categorie_id", "cycle_id"]
+    for col in required_columns:
+        _check(
+            f"list_articles: SELECT inclut '{col}' (affiché par ArticlesScreen/DashboardScreen)",
+            source.count(col) >= 2,  # présent dans les deux branches (avec/sans filtre status)
+            f"'{col}' absent d'une des deux requêtes SELECT",
+        )
+
+
 async def main():
     print("\n=== test_v3_item8 — Synchronisation dynamique des catégories WordPress ===\n")
     await test_resolve_category_id_db_hit()
@@ -179,6 +200,7 @@ async def main():
     test_norm_matches_accents_and_case()
     test_sync_auto_match_logic()
     await test_update_mapping_rejects_invalid_label()
+    test_article_list_endpoint_selects_display_fields()
 
     print(f"\n{_PASSED} passés, {_FAILED} échoués\n")
     if _FAILED:
