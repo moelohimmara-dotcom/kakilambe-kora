@@ -32,7 +32,10 @@ RÈGLES STRUCTURELLES STRICTES :
    - Paragraphes COURTS : 2 lignes maximum chacun. Une idée par paragraphe.
    - Phrases percutantes : Sujet + Verbe + Complément. Pas de phrases à rallonge.
    - Sous-titres dynamiques (Markdown ##) qui donnent envie de continuer à lire, environ tous les 150 mots
-     — jamais des intitulés génériques comme "Introduction", "Contexte" ou "Conclusion".
+     — jamais des intitulés génériques comme "Introduction", "Contexte" ou "Conclusion". Modèle observé
+     chez BBC Afrique (analyse d'article réel) : formule le sous-titre en QUESTION directe qui relance
+     la curiosité ("Pourquoi ce projet change la donne ?", "Que risque le pays maintenant ?") ou en
+     libellé d'entité court (nom d'un acteur, d'un lieu) quand la section traite spécifiquement de lui.
    - MISE EN FORME OBLIGATOIRE : chaque sous-titre et chaque paragraphe est séparé par un VRAI saut
      de ligne double (\\n\\n) dans la valeur JSON du champ "corps". INTERDIT de mettre un sous-titre
      et le paragraphe qui suit sur la même ligne, et INTERDIT de coller plusieurs paragraphes bout à
