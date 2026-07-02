@@ -68,6 +68,29 @@ def test_selector_tier_from_db_levels():
     )
 
 
+def test_selector_guinea_entities_keywords():
+    """
+    Un article Niveau 2 (panafricain) qui mentionne une entité guinéenne de
+    premier plan (Doumbouya, CNRD, Simandou) sans nommer explicitement
+    "Guinée" doit quand même passer le filtre de pertinence strict.
+    """
+    import agent.nodes.selector as selector
+
+    cases = [
+        ({"title": "Doumbouya annonce une réforme", "content": ""}, True),
+        ({"title": "Le CNRD publie un décret", "content": ""}, True),
+        ({"title": "Simandou : première exportation de minerai", "content": ""}, True),
+        ({"title": "Match de football en Espagne", "content": "Rien à voir"}, False),
+    ]
+    for article, expected in cases:
+        result = selector._is_guinea_relevant(article)
+        _check(
+            f"_is_guinea_relevant({article['title']!r}) == {expected}",
+            result == expected,
+            f"got {result}",
+        )
+
+
 def test_selector_strict_filter_applies_to_level2():
     """
     Changement clé de la Phase 2 : le filtre de pertinence Guinée strict
@@ -206,6 +229,7 @@ async def test_selector_mark_processed_noop_on_empty_list():
 async def main():
     print("\n=== test_v3_sourcing — Sources réelles à deux niveaux + ingestion par lots ===\n")
     test_selector_tier_from_db_levels()
+    test_selector_guinea_entities_keywords()
     test_selector_strict_filter_applies_to_level2()
     await test_scraper_load_sources_returns_levels()
     test_scraper_domain_of()

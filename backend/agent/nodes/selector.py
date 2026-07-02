@@ -26,6 +26,10 @@ from sqlalchemy import text
 _GUINEA_KEYWORDS = (
     "guinee", "guinée", "guinea", "conakry", "kankan", "labe", "nzerekore",
     "mamou", "kindia", "boke", "faranah", "kissidougou", "siguiri",
+    # Entités politiques/économiques guinéennes de premier plan — un article
+    # panafricain (Niveau 2) qui les mentionne est pertinent même s'il ne
+    # nomme pas explicitement "Guinée" dans l'extrait analysé.
+    "doumbouya", "cnrd", "simandou",
 )
 
 _ACCENT_MAP = str.maketrans("àâäéèêëîïôöùûüç", "aaaeeeeiioouuuc")
