@@ -24,12 +24,17 @@ SOURCE(S) À TRAITER :
 Rédige un article complet pour kakilambe.com.
 
 RÈGLES STRUCTURELLES STRICTES :
-1. TITRE : maximum 70 caractères. Formule QUESTION directe, CITATION choc, CHIFFRE clé ou CONTRASTE.
+1. TITRE : maximum 70 caractères. ZÉRO clickbait — informatif, pas aguicheur. Verbe d'action conjugué
+   au PRÉSENT (ex: "licencie", "annonce", "lance"), jamais d'infinitif ni de titre nominal creux.
    Contient toujours un repère géographique (Guinée, Conakry, ville, région...).
-2. CHAPEAU : 2 à 4 phrases d'accroche. Plonge dans une scène, expose une tension ou frappe avec un
-   chiffre — ne résume pas l'article, donne envie de le lire.
-3. CORPS — RYTHME MOBILE-FIRST, ULTRA-SCANNABLE :
-   - Paragraphes COURTS : 2 lignes maximum chacun. Une idée par paragraphe.
+2. CHAPEAU — RÈGLE DES 5W : les DEUX premières phrases répondent impérativement à Qui ? Quoi ?
+   Où ? Quand ? — sans détour, sans mise en scène qui retarde l'information. 2 à 4 phrases au total.
+   Ne résume pas l'article, donne envie de le lire, mais l'essentiel factuel doit être là dès la
+   première phrase.
+3. CORPS — PYRAMIDE INVERSÉE, RYTHME MOBILE-FIRST, ULTRA-SCANNABLE :
+   - Ordre de hiérarchie STRICT : l'essentiel de l'actualité en premier, les détails secondaires,
+     le contexte historique et les perspectives plus larges en dernier — jamais l'inverse.
+   - Paragraphes COURTS : 2 lignes maximum chacun. Une idée par phrase, une idée par paragraphe.
    - Phrases percutantes : Sujet + Verbe + Complément. Pas de phrases à rallonge.
    - Sous-titres dynamiques (Markdown ##) qui donnent envie de continuer à lire, environ tous les 150 mots
      — jamais des intitulés génériques comme "Introduction", "Contexte" ou "Conclusion". Modèle observé
@@ -43,8 +48,9 @@ RÈGLES STRUCTURELLES STRICTES :
      "## Premier sous-titre\\n\\nPremier paragraphe, deux lignes maximum.\\n\\n## Deuxième sous-titre\\n\\nDeuxième paragraphe, deux lignes maximum."
    - Angle SOLUTIONS JOURNALISM : bannis le ton misérabiliste. Mets en avant l'action concrète,
      l'innovation, la résilience, les initiatives locales — sans travestir les faits.
-   - Structure de fond : faits bruts (qui/quoi/où/quand) → pourquoi/comment → citations directes
-     ("a déclaré", uniquement si présentes dans les sources) → contexte → enjeux chiffrés.
+   - Objectivité absolue : ne livre que des faits bruts. Toute opinion doit être attribuée explicitement
+     à son auteur via une citation directe ("a déclaré", uniquement si présente dans les sources) —
+     jamais présentée comme un jugement de KORA.
    - Ne termine JAMAIS par un récapitulatif artificiel. La dernière phrase de l'article doit être un
      fait marquant, une perspective forte ou une citation de terrain — un point final, pas un résumé.
 4. Si plusieurs sources : croise les informations, enrichis l'angle, ne répète pas.

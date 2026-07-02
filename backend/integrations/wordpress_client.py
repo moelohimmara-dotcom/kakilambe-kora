@@ -1,9 +1,18 @@
 import httpx
 import base64
+import markdown
 from typing import Optional
 
 from core.config import settings
 from core.logger import logger
+
+# writer.py produit du Markdown (## sous-titres) — WordPress n'interprète pas
+# ce format par défaut (the_content ne fait que wpautop, pas de rendu Markdown
+# sans plugin dédié) : les "##" apparaissaient littéralement sur le site publié.
+# Converti en HTML propre au moment de l'envoi ; le champ `corps` reste en
+# Markdown en base, c'est le format source éditable, pas ce qui part vers WP.
+def _corps_to_html(corps: str) -> str:
+    return markdown.markdown(corps or "", extensions=["nl2br"])
 
 
 class WordPressClient:
@@ -77,7 +86,7 @@ class WordPressClient:
 
         payload = {
             "title":   article.get("titre", ""),
-            "content": article.get("corps", ""),
+            "content": _corps_to_html(article.get("corps", "")),
             "excerpt": article.get("chapeau", ""),
             "status":  "publish",
             "meta": {"_yoast_wpseo_metadesc": article.get("meta_description", "")},
