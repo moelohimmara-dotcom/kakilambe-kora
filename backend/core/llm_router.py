@@ -32,7 +32,14 @@ PROVIDER_CONFIG = {
         "api_key_env": "GEMINI_API_KEY",
     },
     "cerebras": {
-        "primary_model": "cerebras/llama3.3-70b",
+        # "cerebras/llama3.3-70b" renvoyait une 404 en production — pas une
+        # erreur de nommage : Cerebras a retiré Llama 3.3 70B de son offre
+        # publique (vérifié sur inference-docs.cerebras.ai/models/overview,
+        # 2026-07-02). Catalogue production actuel : gpt-oss-120b uniquement.
+        # Ce provider était donc mort en silence depuis le début du projet ;
+        # la chaîne de repli retombait directement sur openrouter (8B, plus
+        # faible) à chaque fois que groq était indisponible.
+        "primary_model": "cerebras/gpt-oss-120b",
         "daily_token_limit": 200_000,
         "rpm_limit": 30,
         "api_key_env": "CEREBRAS_API_KEY",

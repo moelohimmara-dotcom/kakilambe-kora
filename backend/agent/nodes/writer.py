@@ -159,6 +159,62 @@ def _build_sources_section(article: dict) -> tuple[str, str, str]:
         )
     return "\n\n".join(parts), url, source_nom
 
+# ── Contrôle de conformité éditoriale ──────────────────────────────────────
+# Le prompt seul ne suffit pas à garantir le respect des règles (modèles de
+# fallback moins obéissants, variance run-to-run) — ici on VÉRIFIE le texte
+# réellement produit et on rejette la génération (retry) si elle ne respecte
+# pas la charte, au lieu de publier un article non conforme en espérant que
+# le prompt ait suffi.
+_BANNED_WORDS = (
+    "révolutionnaire", "crucial", "indéniable", "explorer", "transcender",
+    "de nos jours", "au cœur de", "véritable thriller", "catalyseur",
+)
+_BANNED_TRANSITIONS = (
+    "en conclusion", "en résumé", "ainsi,", "il est important de rappeler",
+    "en fin de compte", "force est de constater",
+)
+_VAGUE_OPENERS = (
+    "dans un contexte", "il convient de noter", "de manière générale",
+    "il est important de", "il faut savoir que",
+)
+
+
+def _validate_style(chapeau: str, corps: str) -> list[str]:
+    """Retourne la liste des violations trouvées — vide si l'article est conforme."""
+    violations = []
+    blob = f"{chapeau}\n{corps}".lower()
+
+    for w in _BANNED_WORDS:
+        if w in blob:
+            violations.append(f"mot interdit détecté : {w!r}")
+    for t in _BANNED_TRANSITIONS:
+        if t in blob:
+            violations.append(f"transition scolaire détectée : {t!r}")
+
+    chapeau_start = chapeau.strip().lower()
+    for opener in _VAGUE_OPENERS:
+        if chapeau_start.startswith(opener):
+            violations.append(f"chapeau démarre par une généralité floue : {opener!r} (règle des 5W non respectée)")
+
+    if "##" in corps and "\n\n" not in corps.rsplit(_SIGNATURE, 1)[0]:
+        violations.append("sous-titres et paragraphes collés sans vrai saut de ligne")
+
+    # Paragraphes de maximum 2 lignes — ~45 mots est un proxy raisonnable pour
+    # 2 lignes sur mobile. Ignore les sous-titres (##) et la signature finale.
+    body_without_signature = corps.rsplit(_SIGNATURE, 1)[0].strip()
+    for block in body_without_signature.split("\n\n"):
+        block = block.strip()
+        if not block or block.startswith("#"):
+            continue
+        word_count = len(block.split())
+        if word_count > 45:
+            violations.append(
+                f"paragraphe trop long ({word_count} mots, max ~45 pour 2 lignes) : {block[:60]!r}…"
+            )
+
+    return violations
+
+
 _MAX_RETRIES = 2
 
 
@@ -184,12 +240,24 @@ async def _write_with_retry(article: dict) -> ArticleKORA:
             raw = response.choices[0].message.content
             data = json.loads(raw)
 
+            chapeau = data.get("chapeau", "")
+            corps_signed = _append_signature(data.get("corps", ""))
+
+            violations = _validate_style(chapeau, corps_signed)
+            if violations:
+                logger.warning(
+                    "writer_style_rejected",
+                    attempt=attempt,
+                    violations=violations,
+                )
+                raise ValueError(f"Article rejeté (non-conforme à la charte) : {'; '.join(violations)}")
+
             # Validation Pydantic — catégorie résolue en Python, jamais devinée par le LLM
             category_id = await _resolve_category_id(data.get("categorie_label", ""))
             article_obj = ArticleKORA(
                 titre=data.get("titre", titre)[:70],
-                chapeau=data.get("chapeau", ""),
-                corps=_append_signature(data.get("corps", "")),
+                chapeau=chapeau,
+                corps=corps_signed,
                 meta_description=data.get("meta_description", "")[:155],
                 mots_cles=data.get("mots_cles", [])[:5],
                 categorie_wp_id=category_id,
