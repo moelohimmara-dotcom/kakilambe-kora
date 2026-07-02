@@ -18,6 +18,14 @@ SESSION_COOKIE  = "kora_session"
 ADMIN_COOKIE    = "kora_admin_token"
 COOKIE_MAX_AGE  = 60 * 60 * 8   # 8 h
 
+# Un cookie Secure n'est envoyé par le navigateur que sur une connexion HTTPS
+# (RFC 6265) — le forcer à True alors que APP_BASE_URL est en http:// (VPS
+# sans domaine/certificat pour l'instant) fait que le navigateur accepte le
+# login (200 OK) mais rejette silencieusement le cookie, donc /me échoue
+# ensuite. Dérivé de APP_BASE_URL : redevient True automatiquement dès que
+# l'app tourne en HTTPS (domaine + Let's Encrypt), sans y retoucher.
+_COOKIE_SECURE = settings.APP_BASE_URL.strip().lower().startswith("https://")
+
 
 class LoginRequest(BaseModel):
     email: str
@@ -49,7 +57,7 @@ async def login(body: LoginRequest, response: Response):
         key=SESSION_COOKIE,
         value=expected_key,
         httponly=True,
-        secure=True,
+        secure=_COOKIE_SECURE,
         samesite="strict",
         path="/",
         max_age=COOKIE_MAX_AGE,
@@ -77,7 +85,7 @@ async def admin_login(body: AdminLoginRequest):
         key=ADMIN_COOKIE,
         value=expected,
         httponly=True,
-        secure=True,
+        secure=_COOKIE_SECURE,
         samesite="strict",
         path="/",
         max_age=COOKIE_MAX_AGE,
