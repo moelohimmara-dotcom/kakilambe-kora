@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     QSTASH_URL: str = "https://qstash.upstash.io"
     # URL publique du backend — nécessaire pour que QStash sache où renvoyer
     # le webhook (il ne peut pas appeler localhost).
-    APP_BASE_URL: str = "https://kora-582m5.ondigitalocean.app"
+    APP_BASE_URL: str = "http://213.156.135.139"
 
     # ── Security ─────────────────────────────────────────────────────────────
     API_SECRET_KEY: str = ""

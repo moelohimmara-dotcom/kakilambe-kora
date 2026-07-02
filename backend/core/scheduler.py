@@ -69,7 +69,7 @@ async def _send_report(client, cycle_id, started_at, published, errors, success)
         <p style="margin:0 0 8px;color:#6b7280;font-size:13px">Erreurs :</p>
         <ul style="margin:0;padding-left:20px;font-size:13px">{errors_html}</ul>
         <div style="margin-top:20px">
-          <a href="https://kora-582m5.ondigitalocean.app/dashboard"
+          <a href="{settings.APP_BASE_URL}/dashboard"
              style="background:#f97316;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-size:14px;font-weight:600">
             Ouvrir le tableau de bord →
           </a>
@@ -91,7 +91,13 @@ def start_scheduler():
         id="kora_daily_cycle",
         replace_existing=True,
         max_instances=1,
-        misfire_grace_time=300,
+        # 5 minutes était trop court : un redémarrage du service (déploiement,
+        # panne, mise à jour) tombant hors de cette fenêtre autour de l'heure
+        # cible fait sauter silencieusement le cycle du jour entier — pas un
+        # crash, juste une occasion manquée jusqu'au lendemain. Sur un VPS
+        # auto-géré (redéploiements manuels fréquents), 1h de marge est plus
+        # réaliste qu'un service managé qui ne redémarre presque jamais.
+        misfire_grace_time=3600,
     )
     scheduler.start()
     logger.info(
