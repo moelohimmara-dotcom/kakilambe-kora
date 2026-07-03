@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import ReactMarkdown from 'react-markdown'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
@@ -308,17 +309,23 @@ interface EditableFieldProps {
 function EditableField({ tag: Tag, value, className = '', onSave, placeholder, multiline }: EditableFieldProps) {
   const ref = useRef<HTMLElement>(null)
   const [editing, setEditing] = useState(false)
+  // Le corps (multiline) contient du Markdown ("## sous-titre") — affiché en
+  // clair (## visible) tant qu'aucun rendu n'était appliqué. En lecture, on
+  // le rend en HTML propre ; au clic, on repasse en édition du texte brut
+  // Markdown (c'est le format source, l'utilisateur édite toujours le
+  // Markdown, seul l'AFFICHAGE change entre les deux modes).
+  const isMarkdownView = multiline && !editing
 
-  // Sync external changes when not editing
+  // Sync external changes when not editing (mode contentEditable uniquement)
   useEffect(() => {
-    if (!editing && ref.current && ref.current.innerText !== value) {
+    if (!editing && !isMarkdownView && ref.current && ref.current.innerText !== value) {
       ref.current.innerText = value || ''
     }
-  }, [value, editing])
+  }, [value, editing, isMarkdownView])
 
   const handleClick = () => {
     setEditing(true)
-    ref.current?.focus()
+    setTimeout(() => ref.current?.focus(), 0)
   }
 
   const handleBlur = () => {
@@ -336,6 +343,20 @@ function EditableField({ tag: Tag, value, className = '', onSave, placeholder, m
       if (ref.current) ref.current.innerText = value || ''
       ref.current?.blur()
     }
+  }
+
+  if (isMarkdownView) {
+    return (
+      <div
+        onClick={handleClick}
+        className={`${className} cursor-text hover:bg-orange/5 rounded transition-colors`}
+        title="Cliquez pour modifier"
+      >
+        {value ? <ReactMarkdown>{value}</ReactMarkdown> : (
+          <span className="text-gray-med">{placeholder}</span>
+        )}
+      </div>
+    )
   }
 
   return (

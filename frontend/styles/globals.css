@@ -471,6 +471,14 @@ body {
 
 .prose-article p { margin-bottom: 1.2em; }
 .prose-article p:last-child { margin-bottom: 0; }
+.prose-article h2 {
+  font-family: var(--font-heading);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--anthracite);
+  margin: 1.4em 0 0.6em;
+}
+.prose-article em { font-style: italic; }
 
 /* ── Status pill ─────────────────────────────────────────────────── */
 .status-dot {

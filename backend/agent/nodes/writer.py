@@ -7,6 +7,7 @@ La catégorie WordPress est résolue de façon déterministe en Python (cf. _res
 pas devinée par le LLM — évite une mauvaise catégorisation sur le site live.
 """
 import json
+import re
 from agent.state import KoraState
 from agent.state import ArticleKORA
 from core.llm_router import llm_router
@@ -36,11 +37,12 @@ RÈGLES STRUCTURELLES STRICTES :
      le contexte historique et les perspectives plus larges en dernier — jamais l'inverse.
    - Paragraphes COURTS : 2 lignes maximum chacun. Une idée par phrase, une idée par paragraphe.
    - Phrases percutantes : Sujet + Verbe + Complément. Pas de phrases à rallonge.
-   - Sous-titres dynamiques (Markdown ##) qui donnent envie de continuer à lire, environ tous les 150 mots
-     — jamais des intitulés génériques comme "Introduction", "Contexte" ou "Conclusion". Modèle observé
-     chez BBC Afrique (analyse d'article réel) : formule le sous-titre en QUESTION directe qui relance
-     la curiosité ("Pourquoi ce projet change la donne ?", "Que risque le pays maintenant ?") ou en
-     libellé d'entité court (nom d'un acteur, d'un lieu) quand la section traite spécifiquement de lui.
+   - Sous-titres dynamiques (Markdown ##) qui donnent envie de continuer à lire, environ tous les 150 mots.
+     INTERDICTION ABSOLUE d'utiliser ces mots dans un sous-titre : "Introduction", "Contexte",
+     "Conclusion", "Perspective(s)", "Enjeux", "Résumé". Modèle observé chez BBC Afrique (analyse
+     d'article réel) : formule le sous-titre en QUESTION directe qui relance la curiosité ("Pourquoi ce
+     projet change la donne ?", "Que risque le pays maintenant ?") ou en libellé d'entité court (nom
+     d'un acteur, d'un lieu) quand la section traite spécifiquement de lui.
    - MISE EN FORME OBLIGATOIRE : chaque sous-titre et chaque paragraphe est séparé par un VRAI saut
      de ligne double (\\n\\n) dans la valeur JSON du champ "corps". INTERDIT de mettre un sous-titre
      et le paragraphe qui suit sur la même ligne, et INTERDIT de coller plusieurs paragraphes bout à
@@ -165,17 +167,30 @@ def _build_sources_section(article: dict) -> tuple[str, str, str]:
 # réellement produit et on rejette la génération (retry) si elle ne respecte
 # pas la charte, au lieu de publier un article non conforme en espérant que
 # le prompt ait suffi.
-_BANNED_WORDS = (
-    "révolutionnaire", "crucial", "indéniable", "explorer", "transcender",
-    "de nos jours", "au cœur de", "véritable thriller", "catalyseur",
+# Regex plutôt qu'un simple "in blob" : un mot interdit au singulier ("crucial")
+# ne bloquait pas ses déclinaisons ("cruciale", "cruciaux") — trouvé en audit
+# réel sur un article publié où "cruciale" était passée au travers du filtre.
+_BANNED_WORDS_RE = re.compile(
+    r"\b(r[ée]volutionnaires?|crucial(?:e|s|es)?|ind[ée]niables?|explorer|transcender|catalyseurs?)\b",
+    re.IGNORECASE,
+)
+_BANNED_EXPRESSIONS = (
+    "de nos jours", "au cœur de", "véritable thriller",
 )
 _BANNED_TRANSITIONS = (
     "en conclusion", "en résumé", "ainsi,", "il est important de rappeler",
-    "en fin de compte", "force est de constater",
+    "en fin de compte", "force est de constater", "pour conclure", "en définitive",
 )
 _VAGUE_OPENERS = (
     "dans un contexte", "il convient de noter", "de manière générale",
-    "il est important de", "il faut savoir que",
+    "il est important de", "il faut savoir que", "il est à noter",
+)
+# Sous-titres scolaires — le prompt l'interdit déjà, mais rien ne vérifiait
+# le contenu réel des "##" produits (trouvé en audit : "## Introduction",
+# "## Perspective" passaient sans être détectés).
+_BANNED_HEADERS = (
+    "introduction", "contexte", "conclusion", "perspective", "perspectives",
+    "enjeux", "résumé",
 )
 
 
@@ -184,9 +199,11 @@ def _validate_style(chapeau: str, corps: str) -> list[str]:
     violations = []
     blob = f"{chapeau}\n{corps}".lower()
 
-    for w in _BANNED_WORDS:
-        if w in blob:
-            violations.append(f"mot interdit détecté : {w!r}")
+    for m in set(_BANNED_WORDS_RE.findall(blob)):
+        violations.append(f"mot interdit (ou déclinaison) détecté : {m!r}")
+    for e in _BANNED_EXPRESSIONS:
+        if e in blob:
+            violations.append(f"expression interdite détectée : {e!r}")
     for t in _BANNED_TRANSITIONS:
         if t in blob:
             violations.append(f"transition scolaire détectée : {t!r}")
@@ -195,6 +212,14 @@ def _validate_style(chapeau: str, corps: str) -> list[str]:
     for opener in _VAGUE_OPENERS:
         if chapeau_start.startswith(opener):
             violations.append(f"chapeau démarre par une généralité floue : {opener!r} (règle des 5W non respectée)")
+
+    for line in corps.split("\n"):
+        line_clean = line.strip().lower()
+        if line_clean.startswith("##"):
+            header_text = line_clean.lstrip("#").strip()
+            for banned in _BANNED_HEADERS:
+                if banned in header_text:
+                    violations.append(f"sous-titre générique/scolaire détecté : {header_text!r}")
 
     if "##" in corps and "\n\n" not in corps.rsplit(_SIGNATURE, 1)[0]:
         violations.append("sous-titres et paragraphes collés sans vrai saut de ligne")
