@@ -16,6 +16,18 @@ class SettingsPatch(BaseModel):
     delay_between_posts: Optional[int] = None
     daily_report: Optional[bool] = None
     error_alerts: Optional[bool] = None
+    # Bug réel trouvé en corrigeant l'onglet Settings : ces champs sont
+    # envoyés par WordPressTab (formulaire déjà existant) depuis le début,
+    # mais n'étaient jamais déclarés ici — Pydantic les ignorait
+    # silencieusement (body.dict() ne renvoie que les champs déclarés du
+    # modèle), donc le bouton "Sauvegarder" de l'onglet WordPress n'a jamais
+    # réellement persisté ces valeurs en base.
+    wp_url: Optional[str] = None
+    wp_username: Optional[str] = None
+    wp_app_password: Optional[str] = None
+    auto_publish_enabled: Optional[bool] = None
+    daily_article_limit: Optional[int] = None
+    admin_email: Optional[str] = None
 
 
 class SourceCreate(BaseModel):
@@ -54,6 +66,14 @@ async def update_settings(body: SettingsPatch):
                 ),
                 {"k": key, "v": str(value)},
             )
+
+    # Le champ "Heure d'exécution du cycle" ne servirait à rien si on se
+    # contentait de l'écrire en base — le planificateur APScheduler tourne
+    # déjà en mémoire depuis le démarrage. Reprogrammation à chaud.
+    if "cycle_hour" in updates:
+        from core.scheduler import reschedule_cycle_hour
+        reschedule_cycle_hour(int(updates["cycle_hour"]))
+
     return {"updated": list(updates.keys())}
 
 
@@ -76,6 +96,13 @@ class PromptCreate(BaseModel):
     is_default: bool = False
 
 
+class PromptPatch(BaseModel):
+    name: Optional[str] = None
+    content: Optional[str] = None
+    temperature: Optional[float] = None
+    is_default: Optional[bool] = None
+
+
 @router.post("/prompts")
 async def create_prompt(body: PromptCreate):
     async with get_db() as db:
@@ -92,17 +119,74 @@ async def create_prompt(body: PromptCreate):
 
 
 @router.patch("/prompts/{prompt_id}")
-async def update_prompt(prompt_id: str, body: PromptCreate):
+async def update_prompt(prompt_id: str, body: PromptPatch):
+    """
+    Bug réel corrigé : cette route exigeait auparavant un PromptCreate complet
+    (avec `name` obligatoire), mais le frontend n'envoie que {content,
+    temperature} — chaque sauvegarde de prompt échouait avec une 422. Passe
+    en champs optionnels + SET dynamique, même pattern que update_source.
+    """
+    fields = {k: v for k, v in body.dict().items() if v is not None}
+    if not fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    set_clause = ", ".join(f"{k} = :{k}" for k in fields)
+    fields["id"] = prompt_id
     async with get_db() as db:
-        await db.execute(
-            text(
-                "UPDATE system_prompts SET name=:name, content=:content, "
-                "temperature=:temp, is_default=:default WHERE id=:id"
-            ),
-            {"name": body.name, "content": body.content,
-             "temp": body.temperature, "default": body.is_default, "id": prompt_id},
+        result = await db.execute(
+            text(f"UPDATE system_prompts SET {set_clause}, updated_at = now() WHERE id = :id RETURNING id"),
+            fields,
         )
+        if not result.first():
+            raise HTTPException(status_code=404, detail="Prompt non trouvé")
     return {"updated": True}
+
+
+# Contenu d'origine des 3 prompts système livrés avec KORA — issu des
+# migrations 001_init.sql (et 002 pour la version courante de "KORA
+# Journaliste") — nécessaire pour que "Restaurer par défaut" restaure
+# réellement quelque chose plutôt que d'être un bouton qui ne fait rien.
+_BUILTIN_PROMPT_DEFAULTS = {
+    "KORA Journaliste": (
+        "Tu es KORA, journaliste IA expert en actualité guinéenne et ouest-africaine pour kakilambe.com. "
+        "Tu rédiges en français, style BBC News Afrique / New York Times. Neutre, factuel, accessible. "
+        "Structure : titre informatif (max 70 caractères), chapeau d'accroche (2-4 phrases), corps en strates "
+        "(faits bruts, pourquoi/comment, citations directes, contexte, enjeux chiffrés, perspective ouverte). "
+        "Interdits : adjectifs non factuels, expressions floues, voix passive excessive, affirmations sans source. "
+        "Jamais d'invention ni de parti pris politique.",
+        0.7,
+    ),
+    "KORA Éditeur": (
+        "Tu es KORA en mode éditeur. Tu corriges, améliores et reformules les textes fournis. Conserve le sens, améliore la clarté.",
+        0.4,
+    ),
+    "KORA SEO": (
+        "Tu génères des titres accrocheurs, méta-descriptions (155 car.) et tags pour les articles. Optimisé moteurs de recherche.",
+        0.5,
+    ),
+}
+
+
+@router.post("/prompts/{prompt_id}/reset")
+async def reset_prompt(prompt_id: str):
+    async with get_db() as db:
+        result = await db.execute(
+            text("SELECT name, is_builtin FROM system_prompts WHERE id = :id"),
+            {"id": prompt_id},
+        )
+        row = result.mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Prompt non trouvé")
+        if not row["is_builtin"]:
+            raise HTTPException(status_code=400, detail="Seuls les prompts système peuvent être restaurés")
+        default = _BUILTIN_PROMPT_DEFAULTS.get(row["name"])
+        if not default:
+            raise HTTPException(status_code=404, detail="Aucune valeur d'origine connue pour ce prompt")
+        content, temperature = default
+        await db.execute(
+            text("UPDATE system_prompts SET content = :content, temperature = :temp, updated_at = now() WHERE id = :id"),
+            {"content": content, "temp": temperature, "id": prompt_id},
+        )
+    return {"reset": True, "content": content, "temperature": temperature}
 
 
 # ── Sources RSS ───────────────────────────────────────────────────────────────
@@ -188,6 +272,19 @@ async def test_email():
             last_error.append(str(e))
             raise
 
+    # Email admin configurable via /settings (app_settings.admin_email) —
+    # priorité sur la valeur env, même pattern DB-first que les identifiants
+    # WordPress (integrations/wordpress_client._get_credentials).
+    recipient = settings.GMAIL_RECIPIENT
+    try:
+        async with get_db() as db:
+            r = await db.execute(text("SELECT value FROM app_settings WHERE key = 'admin_email'"))
+            row = r.mappings().first()
+        if row and row["value"]:
+            recipient = row["value"]
+    except Exception:
+        pass
+
     now = datetime.now(pytz.timezone(settings.CYCLE_TIMEZONE)).strftime("%d/%m/%Y %H:%M")
     body = f"""
     <div style="font-family:sans-serif;max-width:500px;margin:auto;padding:24px">
@@ -199,14 +296,14 @@ async def test_email():
     </div>
     """
     try:
-        await gmail_client.send_report(subject=f"[KORA] Test de notification — {now}", body_html=body)
+        await gmail_client.send_report(subject=f"[KORA] Test de notification — {now}", body_html=body, to=recipient)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Échec envoi email : {e}")
 
     if last_error:
         raise HTTPException(status_code=500, detail=f"Échec envoi email : {last_error[0]}")
 
-    return {"sent": True, "to": settings.GMAIL_RECIPIENT, "provider": "resend" if resend_key else "smtp"}
+    return {"sent": True, "to": recipient, "provider": "resend" if resend_key else "smtp"}
 
 
 # ── Catégories WordPress (item 8 — synchronisation dynamique) ────────────────

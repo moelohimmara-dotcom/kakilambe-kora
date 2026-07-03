@@ -83,11 +83,32 @@ async def _send_report(client, cycle_id, started_at, published, errors, success)
     await client.send_report(subject=subject, body_html=body)
 
 
-def start_scheduler():
+async def _get_configured_cycle_hour() -> int:
+    """
+    DB-first (app_settings.cycle_hour, modifiable depuis /settings) → variable
+    d'environnement en repli. Même pattern que les identifiants WordPress
+    (wordpress_client._get_credentials) — sans ça, le champ "Heure d'exécution
+    du cycle" de l'UI n'aurait aucun effet réel sur la planification.
+    """
+    try:
+        from db.connection import get_db
+        from sqlalchemy import text
+        async with get_db() as db:
+            result = await db.execute(text("SELECT value FROM app_settings WHERE key = 'cycle_hour'"))
+            row = result.mappings().first()
+        if row and row["value"] is not None:
+            return int(row["value"])
+    except Exception as e:
+        logger.warning("scheduler_cycle_hour_db_read_failed", error=str(e))
+    return settings.CYCLE_HOUR
+
+
+async def start_scheduler():
     tz = pytz.timezone(settings.CYCLE_TIMEZONE)
+    hour = await _get_configured_cycle_hour()
     scheduler.add_job(
         _run_kora_cycle,
-        CronTrigger(hour=settings.CYCLE_HOUR, minute=0, timezone=tz),
+        CronTrigger(hour=hour, minute=0, timezone=tz),
         id="kora_daily_cycle",
         replace_existing=True,
         max_instances=1,
@@ -102,6 +123,20 @@ def start_scheduler():
     scheduler.start()
     logger.info(
         "scheduler_started",
-        hour=settings.CYCLE_HOUR,
+        hour=hour,
         timezone=settings.CYCLE_TIMEZONE,
     )
+
+
+def reschedule_cycle_hour(hour: int) -> None:
+    """
+    Reprogramme le cycle quotidien à chaud, sans redémarrer le service —
+    appelé depuis PATCH /api/settings quand cycle_hour change. Best-effort :
+    ne doit jamais faire échouer la sauvegarde des paramètres.
+    """
+    try:
+        tz = pytz.timezone(settings.CYCLE_TIMEZONE)
+        scheduler.reschedule_job("kora_daily_cycle", trigger=CronTrigger(hour=hour, minute=0, timezone=tz))
+        logger.info("scheduler_rescheduled", hour=hour)
+    except Exception as e:
+        logger.warning("scheduler_reschedule_failed", hour=hour, error=str(e))

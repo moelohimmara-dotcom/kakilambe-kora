@@ -109,6 +109,13 @@ export const settingsApi = {
   prompts: () => request<import('./types').SystemPrompt[]>('/api/settings/prompts'),
   updatePrompt: (id: string, data: Partial<import('./types').SystemPrompt>) =>
     request(`/api/settings/prompts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  resetPrompt: (id: string) =>
+    request<{ reset: boolean; content: string; temperature: number }>(
+      `/api/settings/prompts/${id}/reset`,
+      { method: 'POST' }
+    ),
+  testEmail: () =>
+    request<{ sent: boolean; to: string; provider: string }>('/api/settings/test-email', { method: 'POST' }),
   sources: () => request<import('./types').RSSSource[]>('/api/settings/sources'),
   createSource: (data: { name: string; url: string; category?: string }) =>
     request('/api/settings/sources', { method: 'POST', body: JSON.stringify(data) }),

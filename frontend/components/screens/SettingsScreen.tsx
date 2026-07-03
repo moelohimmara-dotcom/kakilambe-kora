@@ -13,6 +13,21 @@ import type { SystemPrompt, Provider, AppSettings, WpCategory, KoraCategoryLabel
 
 type Tab = 'wordpress' | 'categories' | 'prompts' | 'providers'
 
+// app_settings stocke tout en TEXT côté backend (str(value) en Python) —
+// une valeur booléenne fausse revient comme la chaîne non vide "False",
+// qui est "truthy" en JS. Sans coercion, un Toggle désactivé puis rechargé
+// réapparaîtrait actif. Utilisé pour toutes les valeurs booléennes/numériques
+// lues depuis /api/settings.
+function asBool(v: unknown, fallback: boolean): boolean {
+  if (typeof v === 'boolean') return v
+  if (typeof v === 'string') return v.toLowerCase() === 'true'
+  return fallback
+}
+function asNumber(v: unknown, fallback: number): number {
+  const n = Number(v)
+  return Number.isFinite(n) && v !== undefined && v !== null && v !== '' ? n : fallback
+}
+
 const KORA_LABELS: KoraCategoryLabel[] = [
   'Politique', 'Économie', 'Société', 'Sport', 'Culture', 'Sécurité', 'International',
 ]
@@ -71,6 +86,8 @@ function WordPressTab() {
   const { show } = useToast()
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<'ok' | 'fail' | null>(null)
+  const [showPassword, setShowPassword] = useState(false)
+  const [testingEmail, setTestingEmail] = useState(false)
 
   const fetchSettings = useCallback(() => settingsApi.get(), [])
   const { data, loading } = useAsync<AppSettings>(fetchSettings)
@@ -97,9 +114,33 @@ function WordPressTab() {
     }
   }
 
+  async function testEmail() {
+    setTestingEmail(true)
+    try {
+      const r = await settingsApi.testEmail()
+      show(`Email de test envoyé à ${r.to}`, 'success')
+    } catch (e) {
+      show(e instanceof Error ? e.message : 'Échec de l\'envoi de l\'email', 'error')
+    } finally {
+      setTestingEmail(false)
+    }
+  }
+
   if (loading) return <div className="flex justify-center py-8"><Spinner /></div>
 
-  const current = { ...settings, ...form }
+  // app_settings renvoie tout en texte brut (str(value) côté backend) —
+  // coercion explicite pour que les Toggle/number reflètent la vraie valeur,
+  // y compris "false"/"False" (sinon truthy en JS car chaîne non vide).
+  const raw = { ...settings, ...form } as Record<string, unknown>
+  const current = {
+    ...raw,
+    auto_publish_enabled: asBool(raw.auto_publish_enabled, false),
+    daily_article_limit: asNumber(raw.daily_article_limit, 3),
+    cycle_hour: asNumber(raw.cycle_hour, 6),
+    delay_between_posts: asNumber(raw.delay_between_posts, 15),
+    daily_report: asBool(raw.daily_report, false),
+    error_alerts: asBool(raw.error_alerts, false),
+  } as AppSettings
 
   return (
     <div className="space-y-6">
@@ -129,15 +170,25 @@ function WordPressTab() {
             />
           </Field>
           <Field label="Mot de passe d'application" id="wp_pass">
-            <input
-              id="wp_pass"
-              type="password"
-              defaultValue={current.wp_app_password ? '••••••••••••' : ''}
-              onChange={e => setForm(p => ({ ...p, wp_app_password: e.target.value }))}
-              placeholder="xxxx xxxx xxxx xxxx xxxx"
-              className="form-input"
-              autoComplete="new-password"
-            />
+            <div className="relative">
+              <input
+                id="wp_pass"
+                type={showPassword ? 'text' : 'password'}
+                defaultValue={current.wp_app_password ? '••••••••••••' : ''}
+                onChange={e => setForm(p => ({ ...p, wp_app_password: e.target.value }))}
+                placeholder="xxxx xxxx xxxx xxxx xxxx"
+                className="form-input pr-16"
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(v => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 font-heading text-[11px] text-gray-dk hover:text-anthracite px-2 py-1"
+                aria-label={showPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+              >
+                {showPassword ? 'Masquer' : 'Afficher'}
+              </button>
+            </div>
           </Field>
         </div>
 
@@ -175,6 +226,75 @@ function WordPressTab() {
               className="form-input w-24"
             />
           </Field>
+        </div>
+      </Card>
+
+      <Card>
+        <h2 className="font-heading font-semibold text-[14px] text-anthracite mb-4">
+          Planification & Cycles
+        </h2>
+        <div className="space-y-4">
+          <Field label="Heure d'exécution du cycle (UTC)" id="cycle_hour">
+            <input
+              id="cycle_hour"
+              type="number"
+              min={0} max={23}
+              defaultValue={current.cycle_hour ?? 6}
+              onChange={e => setForm(p => ({ ...p, cycle_hour: Number(e.target.value) }))}
+              className="form-input w-24"
+              placeholder="6"
+            />
+            <p className="font-heading text-[11px] text-gray-dk mt-1">Exemple : 6 pour 6h00 UTC.</p>
+          </Field>
+          <Field label="Délai entre chaque publication (secondes)" id="delay_posts">
+            <input
+              id="delay_posts"
+              type="number"
+              min={0} max={3600}
+              defaultValue={current.delay_between_posts ?? 15}
+              onChange={e => setForm(p => ({ ...p, delay_between_posts: Number(e.target.value) }))}
+              className="form-input w-24"
+            />
+            <p className="font-heading text-[11px] text-gray-dk mt-1">
+              Espacement (via QStash) entre chaque article publié lors d&apos;un même cycle.
+            </p>
+          </Field>
+        </div>
+      </Card>
+
+      <Card>
+        <h2 className="font-heading font-semibold text-[14px] text-anthracite mb-4">
+          Notifications & Alertes
+        </h2>
+        <div className="space-y-4">
+          <Toggle
+            checked={current.daily_report ?? false}
+            onChange={v => setForm(p => ({ ...p, daily_report: v }))}
+            label="Activer le rapport quotidien"
+            description="Recevez un email résumant l'activité de KORA après chaque cycle."
+          />
+          <Toggle
+            checked={current.error_alerts ?? false}
+            onChange={v => setForm(p => ({ ...p, error_alerts: v }))}
+            label="Alertes d'erreur"
+            description="Signale les échecs de cycle dans le rapport email."
+          />
+          <Field label="Email de l'administrateur" id="admin_email">
+            <input
+              id="admin_email"
+              type="email"
+              defaultValue={current.admin_email ?? ''}
+              onChange={e => setForm(p => ({ ...p, admin_email: e.target.value }))}
+              className="form-input"
+              placeholder="admin@kakilambe.com"
+            />
+          </Field>
+
+          <div className="mt-4 pt-4 border-t border-gray-pale">
+            <Button variant="outline" size="sm" onClick={testEmail} loading={testingEmail}>
+              Envoyer un email de test
+            </Button>
+          </div>
         </div>
       </Card>
     </div>
@@ -285,6 +405,18 @@ function PromptsTab() {
     await refetch()
   })
 
+  const { mutate: resetPrompt, loading: resetting } = useMutation(async (id: string) => {
+    try {
+      const result = await settingsApi.resetPrompt(id)
+      setEditContent(result.content)
+      setEditTemp(result.temperature)
+      show('Prompt restauré à sa valeur d\'origine', 'success')
+      await refetch()
+    } catch (e) {
+      show(e instanceof Error ? e.message : 'Impossible de restaurer ce prompt', 'error')
+    }
+  })
+
   if (loading) return <div className="flex justify-center py-8"><Spinner /></div>
 
   return (
@@ -340,6 +472,20 @@ function PromptsTab() {
                   Sauvegarder
                 </Button>
                 <Button variant="ghost" size="sm" onClick={() => setEditing(null)}>Annuler</Button>
+                {prompt.is_builtin && (
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    loading={resetting}
+                    onClick={() => {
+                      if (confirm('Voulez-vous vraiment écraser vos modifications pour revenir au prompt système par défaut ?')) {
+                        resetPrompt(prompt.id)
+                      }
+                    }}
+                  >
+                    Restaurer par défaut
+                  </Button>
+                )}
               </div>
             </div>
           ) : (

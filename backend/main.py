@@ -29,7 +29,7 @@ from api.webhook_routes import router as webhook_router
 async def lifespan(app: FastAPI):
     from core.llm_router import llm_router
     await llm_router.load_from_db()
-    start_scheduler()
+    await start_scheduler()
     yield
     scheduler.shutdown(wait=False)
 

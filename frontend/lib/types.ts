@@ -114,4 +114,8 @@ export interface AppSettings {
   publication_delay_hours?: number
   report_email?: string
   admin_email?: string
+  cycle_hour?: number
+  delay_between_posts?: number
+  daily_report?: boolean
+  error_alerts?: boolean
 }
