@@ -80,6 +80,18 @@ export function AgentScreen() {
     cycle?.status === 'RUNNING' ? 3000 : cycle?.status === 'PAUSED' ? 5000 : null
   )
 
+  // Article réellement en attente pour ce cycle — sans ça, "Lire l'article"
+  // pointait vers une liste filtrée générique qui, en pratique, montrait
+  // surtout des articles déjà publiés/supprimés (le filtre par status n'était
+  // même pas appliqué côté page Articles). On résout ici l'article concret et
+  // on pointe directement dessus.
+  const fetchPendingArticle = useCallback(async () => {
+    if (cycle?.status !== 'PAUSED') return null
+    const list = await articleApi.list('PENDING_REVIEW')
+    return list.items.find(a => a.cycle_id === (cycle?.cycle_id ?? currentCycleId)) ?? list.items[0] ?? null
+  }, [cycle?.status, cycle?.cycle_id, currentCycleId])
+  const { data: pendingArticle } = useAsync(fetchPendingArticle, [cycle?.status, cycle?.cycle_id])
+
   // SSE logs — rejoue l'historique DB (event replay) puis bascule en direct
   useEffect(() => {
     if (!currentCycleId) return
@@ -362,7 +374,11 @@ export function AgentScreen() {
                 >
                   Rejeter et passer
                 </Button>
-                <Button href="/articles?status=PENDING_REVIEW" variant="outline" size="sm">
+                <Button
+                  href={pendingArticle ? `/articles/${pendingArticle.id}` : '/articles?status=PENDING_REVIEW'}
+                  variant="outline"
+                  size="sm"
+                >
                   Lire l'article →
                 </Button>
               </div>

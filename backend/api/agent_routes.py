@@ -163,7 +163,17 @@ async def get_status(cycle_id: Optional[str] = None):
             db_cycle = await _get_cycle_from_db(cycle_id)
             if not db_cycle:
                 raise HTTPException(status_code=404, detail="Cycle non trouvé")
-            return _normalize_db_cycle(db_cycle)
+            normalized = _normalize_db_cycle(db_cycle)
+            # Un cycle PAUSED en base dont l'article a été résolu directement
+            # via la page Articles (approuvé/rejeté/supprimé) reste PAUSED en
+            # base pour toujours — sans ce garde-fou, le frontend (qui interroge
+            # /status avec ce cycle_id précis, stocké en localStorage) affichait
+            # indéfiniment "article en attente" pour un article qui n'existe
+            # déjà plus. On force ici le statut vers COMPLETED pour signaler
+            # au frontend qu'il n'y a plus rien à valider sur ce cycle.
+            if normalized["status"] == "PAUSED" and not await _has_pending_article(cycle_id):
+                normalized["status"] = "COMPLETED"
+            return normalized
         return {"cycle_id": cycle_id, **cycle}
 
     if not _cycles:
@@ -256,7 +266,7 @@ async def resume_cycle(cycle_id: str):
         # irrécupérable après redémarrage. Message explicite pour orienter
         # vers la vraie solution (Articles → approuver/rejeter directement).
         db_cycle = await _get_cycle_from_db(cycle_id)
-        if db_cycle and db_cycle.get("status") == "PAUSED":
+        if db_cycle and db_cycle.get("status") == "PAUSED" and await _has_pending_article(cycle_id):
             raise HTTPException(
                 status_code=409,
                 detail=(
@@ -267,7 +277,7 @@ async def resume_cycle(cycle_id: str):
                     "directement l'article en attente."
                 ),
             )
-        raise HTTPException(status_code=404, detail="Cycle non trouvé")
+        raise HTTPException(status_code=404, detail="Cycle non trouvé (ou déjà résolu — plus rien en attente)")
     if cycle.get("status") not in ("PAUSED",):
         raise HTTPException(
             status_code=400,
@@ -385,7 +395,7 @@ async def reject_current_article(cycle_id: str):
     cycle = _cycles.get(cycle_id)
     if not cycle:
         db_cycle = await _get_cycle_from_db(cycle_id)
-        if db_cycle and db_cycle.get("status") == "PAUSED":
+        if db_cycle and db_cycle.get("status") == "PAUSED" and await _has_pending_article(cycle_id):
             raise HTTPException(
                 status_code=409,
                 detail=(
@@ -394,7 +404,7 @@ async def reject_current_article(cycle_id: str):
                     "rejeter directement l'article en attente."
                 ),
             )
-        raise HTTPException(status_code=404, detail="Cycle non trouvé")
+        raise HTTPException(status_code=404, detail="Cycle non trouvé (ou déjà résolu — plus rien en attente)")
     if cycle.get("status") != "PAUSED":
         raise HTTPException(status_code=400, detail="Cycle non en pause")
 
@@ -495,13 +505,34 @@ async def _get_cycle_logs_history(cycle_id: str, limit: int = 200) -> list[dict]
 
 
 async def _get_active_cycle_from_db() -> Optional[dict]:
-    """Dernier cycle RUNNING/PAUSED en base — reprise de session après redémarrage backend."""
+    """
+    Dernier cycle RUNNING/PAUSED en base — reprise de session après redémarrage
+    backend.
+
+    Root cause du bug "carte HITL fantôme" : un cycle PAUSED reste PAUSED en
+    base pour toujours si son article est résolu (approuvé/rejeté/supprimé)
+    directement via la page Articles ou via le fallback article-level, car ces
+    chemins ne touchent jamais `cycles.status`. Sans la vérification ci-dessous,
+    ce cycle orphelin est resservi indéfiniment par /status et le frontend
+    affiche "article en attente" alors qu'il n'en reste plus aucun.
+    Un cycle PAUSED n'est donc considéré actif que s'il a encore un article
+    PENDING_REVIEW réel ; un cycle RUNNING est toujours en cours de traitement
+    donc pas concerné par cette vérification.
+    """
     try:
         from db.connection import get_db
         async with get_db() as db:
             result = await db.execute(
                 text("""
-                    SELECT * FROM cycles WHERE status IN ('RUNNING','PAUSED')
+                    SELECT * FROM cycles c
+                    WHERE status IN ('RUNNING','PAUSED')
+                      AND (
+                        status = 'RUNNING'
+                        OR EXISTS (
+                            SELECT 1 FROM articles a
+                            WHERE a.cycle_id = c.id AND a.status = 'PENDING_REVIEW'
+                        )
+                      )
                     ORDER BY started_at DESC LIMIT 1
                 """)
             )
@@ -556,3 +587,18 @@ async def _get_cycle_from_db(cycle_id: str) -> Optional[dict]:
             return dict(row) if row else None
     except Exception:
         return None
+
+
+async def _has_pending_article(cycle_id: str) -> bool:
+    """Existe-t-il encore un article PENDING_REVIEW réel pour ce cycle ?"""
+    try:
+        from db.connection import get_db
+        async with get_db() as db:
+            result = await db.execute(
+                text("SELECT 1 FROM articles WHERE cycle_id=:cid AND status='PENDING_REVIEW' LIMIT 1"),
+                {"cid": cycle_id},
+            )
+            return result.first() is not None
+    except Exception as e:
+        logger.warning("pending_article_check_failed", cycle_id=cycle_id, error=str(e))
+        return True  # sûr par défaut : ne pas masquer un vrai cycle en attente sur panne DB

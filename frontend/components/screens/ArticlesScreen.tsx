@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
@@ -23,9 +23,15 @@ const STATUS_TABS: { label: string; value: ArticleStatus | '' }[] = [
   { label: 'Rejetés', value: 'REJECTED' },
 ]
 
+const VALID_STATUSES = new Set(STATUS_TABS.map(t => t.value))
+
 export function ArticlesScreen() {
   const router = useRouter()
-  const [activeStatus, setActiveStatus] = useState<ArticleStatus | ''>('')
+  const searchParams = useSearchParams()
+  const statusFromUrl = searchParams.get('status') ?? ''
+  const [activeStatus, setActiveStatus] = useState<ArticleStatus | ''>(
+    VALID_STATUSES.has(statusFromUrl as ArticleStatus) ? (statusFromUrl as ArticleStatus) : ''
+  )
   const [evaporating, setEvaporating] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const { show } = useToast()
