@@ -35,8 +35,19 @@ export function AgentScreen() {
   // l'utilisateur rafraîchit la page (le backend garde son propre état tant
   // qu'il n'a pas redémarré — /api/agent/status retombe sur la DB sinon).
   const [currentCycleId, setCurrentCycleId] = useState<string | null>(null)
+  const [logsFading, setLogsFading] = useState(false)
   const logsEndRef = useRef<HTMLDivElement>(null)
+  const logsFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const logsClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const prevCycleStatusRef = useRef<string | undefined>(undefined)
   const { show } = useToast()
+
+  function _clearLogsResetTimers() {
+    if (logsFadeTimerRef.current) clearTimeout(logsFadeTimerRef.current)
+    if (logsClearTimerRef.current) clearTimeout(logsClearTimerRef.current)
+    setLogsFading(false)
+    setLogs([])
+  }
   // Garde anti-double-clic : `loading` du hook useMutation ne se répercute
   // sur le DOM (bouton disabled) qu'après le prochain rendu — un double-clic
   // très rapide peut donc déclencher deux appels avant que le bouton ne se
@@ -73,6 +84,32 @@ export function AgentScreen() {
       localStorage.setItem(CYCLE_ID_STORAGE_KEY, currentCycleId)
     }
   }, [currentCycleId, cycle?.status])
+
+  // Nettoyage automatique de la console de logs à la clôture réussie d'un
+  // cycle (mode autonome) : laisse le temps de lire la confirmation, puis
+  // fait un fade-out avant de vider — sans toucher à la connexion SSE
+  // (effet séparé ci-dessous, gardé actif tant que currentCycleId ne change
+  // pas).
+  useEffect(() => {
+    const prevStatus = prevCycleStatusRef.current
+    const currentStatus = cycle?.status
+    prevCycleStatusRef.current = currentStatus
+
+    if (prevStatus !== 'COMPLETED' && currentStatus === 'COMPLETED') {
+      logsFadeTimerRef.current = setTimeout(() => {
+        setLogsFading(true)
+        logsClearTimerRef.current = setTimeout(() => {
+          setLogs([])
+          setLogsFading(false)
+        }, 500)
+      }, 7000)
+    }
+
+    return () => {
+      if (logsFadeTimerRef.current) clearTimeout(logsFadeTimerRef.current)
+      if (logsClearTimerRef.current) clearTimeout(logsClearTimerRef.current)
+    }
+  }, [cycle?.status])
 
   // Refresh pendant un cycle actif
   useInterval(
@@ -150,7 +187,7 @@ export function AgentScreen() {
 
   const { mutate: runCycle, loading: running } = useMutation(async () => {
     try {
-      setLogs([])
+      _clearLogsResetTimers()
       const result = await agentApi.run(mode)
       const r = result as { cycle_id: string }
       setCurrentCycleId(r.cycle_id)
@@ -394,13 +431,18 @@ export function AgentScreen() {
             Logs temps réel
           </h2>
           <button
-            onClick={() => setLogs([])}
+            onClick={_clearLogsResetTimers}
             className="font-heading text-[11px] text-gray-dk hover:text-danger transition-colors"
           >
             Effacer
           </button>
         </div>
-        <div className="terminal h-72 overflow-y-auto" role="log" aria-label="Logs KORA" aria-live="off">
+        <div
+          className={`terminal h-72 overflow-y-auto transition-opacity duration-500 ${logsFading ? 'opacity-0' : 'opacity-100'}`}
+          role="log"
+          aria-label="Logs KORA"
+          aria-live="off"
+        >
           {logs.length === 0 ? (
             <p className="log-ts">// En attente des logs…</p>
           ) : (
