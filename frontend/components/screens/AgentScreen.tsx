@@ -6,7 +6,7 @@ import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Toggle } from '@/components/ui/Toggle'
 import { useToast } from '@/lib/contexts/ToastContext'
-import { agentApi } from '@/lib/api'
+import { agentApi, articleApi } from '@/lib/api'
 import { useAsync, useMutation, useInterval } from '@/lib/hooks'
 import { formatRelative } from '@/lib/utils'
 
@@ -37,6 +37,11 @@ export function AgentScreen() {
   const [currentCycleId, setCurrentCycleId] = useState<string | null>(null)
   const logsEndRef = useRef<HTMLDivElement>(null)
   const { show } = useToast()
+  // Garde anti-double-clic : `loading` du hook useMutation ne se répercute
+  // sur le DOM (bouton disabled) qu'après le prochain rendu — un double-clic
+  // très rapide peut donc déclencher deux appels avant que le bouton ne se
+  // désactive visuellement, d'où le message d'erreur affiché deux fois.
+  const hitlActionInFlight = useRef(false)
 
   useEffect(() => {
     const saved = localStorage.getItem(CYCLE_ID_STORAGE_KEY)
@@ -100,9 +105,32 @@ export function AgentScreen() {
   // réseau ou un 404 ne produit AUCUN retour visible : ni succès, ni erreur,
   // le clic semble juste "ne rien faire". C'était le vrai bug derrière
   // "les boutons ne s'exécutent pas jusqu'au bout".
+  function _isLostSessionError(e: unknown): boolean {
+    const msg = e instanceof Error ? e.message : String(e)
+    return msg.includes('404') || msg.includes('409') || msg.toLowerCase().includes('non trouvé')
+  }
+
+  // Repli quand le cycle LangGraph n'est plus résumable (session perdue au
+  // redémarrage du backend) : le résultat pratique voulu par l'utilisateur —
+  // publier ou rejeter l'article — reste atteignable directement au niveau
+  // de l'article, sans dépendre du checkpoint en mémoire. Avant, le bouton
+  // se contentait d'afficher un message renvoyant vers la page Articles ;
+  // maintenant il fait le travail lui-même.
+  async function _fallbackToArticleAction(action: 'approve' | 'reject'): Promise<boolean> {
+    const list = await articleApi.list('PENDING_REVIEW')
+    const article = list.items.find(a => a.cycle_id === currentCycleId) ?? list.items[0]
+    if (!article) return false
+    if (action === 'approve') {
+      await articleApi.approve(article.id)
+    } else {
+      await articleApi.reject(article.id)
+    }
+    return true
+  }
+
   function _friendlyError(e: unknown): string {
     const msg = e instanceof Error ? e.message : String(e)
-    if (msg.includes('404') || msg.toLowerCase().includes('non trouvé')) {
+    if (_isLostSessionError(e)) {
       return "Ce cycle n'est plus actif en mémoire (le backend a probablement redémarré depuis sa mise en pause). Utilise la page Articles pour approuver/rejeter directement l'article en attente."
     }
     return msg
@@ -123,26 +151,68 @@ export function AgentScreen() {
   })
 
   const { mutate: resumeCycle, loading: resuming } = useMutation(async () => {
-    if (!currentCycleId) return
+    if (!currentCycleId || hitlActionInFlight.current) return
+    hitlActionInFlight.current = true
     try {
       await agentApi.resume(currentCycleId)
       addLog({ level: 'HITL', event: 'Validation accordée — reprise de la publication' })
       show('Cycle repris', 'success')
       await refetchStatus()
     } catch (e) {
+      if (_isLostSessionError(e)) {
+        try {
+          const handled = await _fallbackToArticleAction('approve')
+          if (handled) {
+            addLog({ level: 'HITL', event: 'Session perdue — article approuvé directement' })
+            show('Article approuvé et envoyé en publication', 'success')
+            localStorage.removeItem(CYCLE_ID_STORAGE_KEY)
+            setCurrentCycleId(null)
+            await refetchStatus()
+            return
+          }
+        } catch (fallbackErr) {
+          show(_friendlyError(fallbackErr), 'error')
+          return
+        } finally {
+          hitlActionInFlight.current = false
+        }
+      }
       show(_friendlyError(e), 'error')
+    } finally {
+      hitlActionInFlight.current = false
     }
   })
 
   const { mutate: rejectCycle } = useMutation(async () => {
-    if (!currentCycleId) return
+    if (!currentCycleId || hitlActionInFlight.current) return
+    hitlActionInFlight.current = true
     try {
       await agentApi.reject(currentCycleId)
       addLog({ level: 'HITL', event: 'Article rejeté — passage au suivant' })
       show('Article rejeté', 'warning')
       await refetchStatus()
     } catch (e) {
+      if (_isLostSessionError(e)) {
+        try {
+          const handled = await _fallbackToArticleAction('reject')
+          if (handled) {
+            addLog({ level: 'HITL', event: 'Session perdue — article rejeté directement' })
+            show('Article rejeté', 'warning')
+            localStorage.removeItem(CYCLE_ID_STORAGE_KEY)
+            setCurrentCycleId(null)
+            await refetchStatus()
+            return
+          }
+        } catch (fallbackErr) {
+          show(_friendlyError(fallbackErr), 'error')
+          return
+        } finally {
+          hitlActionInFlight.current = false
+        }
+      }
       show(_friendlyError(e), 'error')
+    } finally {
+      hitlActionInFlight.current = false
     }
   })
 
