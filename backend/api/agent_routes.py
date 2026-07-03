@@ -37,16 +37,33 @@ _SENTINEL = object()  # signal de fin de stream
 
 class RunRequest(BaseModel):
     mode: str = "semi"   # "auto" | "semi"
+    # Généré côté client (crypto.randomUUID()) plutôt que côté serveur : le
+    # frontend a besoin de connaître le cycle_id AVANT que /run ne réponde
+    # (la réponse est désormais bloquante jusqu'à la pause HITL ou la fin du
+    # cycle, potentiellement 1 à 3 minutes) pour pouvoir exposer un bouton
+    # "Annuler" fonctionnel pendant l'attente, via un appel HTTP séparé à
+    # /cancel/{cycle_id}. Repli sur un UUID serveur si absent (rétrocompat).
+    cycle_id: Optional[str] = None
 
 
 # ── POST /run ─────────────────────────────────────────────────────────────────
+# Bloquant par conception : la réponse HTTP n'est renvoyée qu'une fois le
+# graphe LangGraph arrivé à la pause HITL (mode semi) ou complètement terminé
+# (mode auto), afin que le frontend puisse rediriger instantanément vers
+# l'article prêt dès réception de la réponse, sans polling intermédiaire.
+# Le graphe tourne malgré tout dans une Task asyncio distincte (pas inline)
+# pour deux raisons : (1) elle reste annulable via /cancel/{cycle_id} pendant
+# l'attente, (2) si le client se déconnecte (coupure réseau, onglet fermé,
+# timeout proxy) avant la fin, le cycle continue et reste normalement
+# consultable via GET /status — aucune perte de travail contrairement à une
+# exécution strictement inline dans le handler de requête.
 
 @router.post("/run")
 async def run_cycle(body: RunRequest):
     if body.mode not in ("auto", "semi"):
         raise HTTPException(status_code=400, detail="mode must be 'auto' or 'semi'")
 
-    cycle_id = str(uuid.uuid4())
+    cycle_id = body.cycle_id or str(uuid.uuid4())
 
     # Enregistre le cycle en base
     await _persist_cycle(cycle_id, body.mode)
@@ -85,6 +102,10 @@ async def run_cycle(body: RunRequest):
 
             if body.mode == "semi":
                 _cycles[cycle_id]["status"] = "PAUSED"
+                # article_id nécessaire au frontend pour rediriger directement
+                # vers /articles/{id} dès la réponse de /run — sans lui, la
+                # redirection instantanée demandée n'a pas de cible.
+                _cycles[cycle_id]["article_id"] = ((result or {}).get("generated_article") or {}).get("db_id")
                 _emit_log(cycle_id, "HITL", "Article prêt — en attente de validation humaine")
                 await _update_cycle_status(cycle_id, "PAUSED")
             else:
@@ -118,16 +139,45 @@ async def run_cycle(body: RunRequest):
             _running_tasks.pop(cycle_id, None)
 
     _log_queues[cycle_id] = asyncio.Queue()
-    _running_tasks[cycle_id] = asyncio.create_task(_run())
+    task = asyncio.create_task(_run())
+    _running_tasks[cycle_id] = task
     asyncio.create_task(_cleanup_queue(cycle_id, delay=300))
     logger.info("cycle_started", cycle_id=cycle_id, mode=body.mode)
 
-    return {
-        "cycle_id": cycle_id,
-        "status": "RUNNING",
-        "mode": body.mode,
-        "message": "Cycle lancé. Utilisez /status ou /stream pour suivre l'avancement.",
-    }
+    try:
+        await task
+    except asyncio.CancelledError:
+        # _run() a déjà marqué le statut CANCELLED et propagé l'annulation
+        # pour respecter la sémantique asyncio — on l'intercepte ici pour
+        # renvoyer une réponse HTTP propre plutôt qu'une erreur 500, sans
+        # annuler à son tour la requête /run elle-même (pas de re-raise).
+        pass
+
+    final = _cycles.get(cycle_id, {})
+    status = final.get("status")
+
+    if status == "PAUSED":
+        return {
+            "cycle_id": cycle_id,
+            "status": "PAUSED",
+            "mode": body.mode,
+            "article_id": final.get("article_id"),
+            "message": "Article prêt pour validation" if final.get("article_id") else "Cycle en pause, article introuvable automatiquement",
+        }
+    if status == "COMPLETED":
+        return {
+            "cycle_id": cycle_id,
+            "status": "COMPLETED",
+            "mode": body.mode,
+            "published_count": final.get("published_count", 0),
+        }
+    if status == "CANCELLED":
+        raise HTTPException(status_code=409, detail="Cycle annulé")
+
+    raise HTTPException(
+        status_code=500,
+        detail="; ".join(final.get("errors", [])) or "Échec du cycle",
+    )
 
 
 # ── GET /status ───────────────────────────────────────────────────────────────

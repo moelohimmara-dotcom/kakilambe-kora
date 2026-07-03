@@ -141,6 +141,18 @@ export function AgentScreen() {
     }
   }, [isFailed]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // crypto.randomUUID() exige un contexte sécurisé (HTTPS/localhost) — le
+  // site tourne encore en HTTP simple (pas de domaine/Certbot à ce jour),
+  // donc indisponible dans le vrai navigateur de production. Repli manuel,
+  // suffisant pour un simple identifiant de corrélation côté client.
+  function _generateCycleId(): string {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const r = (Math.random() * 16) | 0
+      const v = c === 'x' ? r : (r & 0x3) | 0x8
+      return v.toString(16)
+    })
+  }
+
   function _isLostSessionError(e: unknown): boolean {
     const msg = e instanceof Error ? e.message : String(e)
     return msg.includes('404') || msg.includes('409') || msg.toLowerCase().includes('non trouvé')
@@ -154,16 +166,36 @@ export function AgentScreen() {
     return msg
   }
 
+  // Le POST /api/agent/run est désormais bloquant côté backend : la réponse
+  // n'arrive qu'une fois le graphe LangGraph à la pause HITL (mode semi) ou
+  // terminé (mode auto). cycle_id généré ici, AVANT l'appel, pour que le
+  // bouton "Annuler" reste fonctionnel pendant l'attente (appel HTTP séparé
+  // sur /cancel/{cycleId}) sans dépendre de cette réponse encore en vol.
   const { mutate: runCycle, loading: running } = useMutation(async () => {
+    const newCycleId = _generateCycleId()
+    redirectedForCycleRef.current = null
+    pendingSinceRef.current = null
+    setCurrentCycleId(newCycleId)
+    localStorage.setItem(CYCLE_ID_STORAGE_KEY, newCycleId)
     try {
-      redirectedForCycleRef.current = null
-      pendingSinceRef.current = null
-      const result = await agentApi.run(mode)
-      const r = result as { cycle_id: string }
-      setCurrentCycleId(r.cycle_id)
-      await refetchStatus()
+      const result = await agentApi.run(mode, newCycleId)
+      if (result.status === 'PAUSED' && result.article_id) {
+        redirectedForCycleRef.current = newCycleId
+        localStorage.removeItem(CYCLE_ID_STORAGE_KEY)
+        router.push(`/articles/${result.article_id}`)
+        return
+      }
+      if (result.status === 'PAUSED') {
+        show("Article prêt mais introuvable automatiquement — consulte l'onglet Articles.", 'warning')
+      } else if (result.status === 'COMPLETED') {
+        show(`Cycle terminé — ${result.published_count ?? 0} article(s) publié(s)`, 'success')
+      }
+      localStorage.removeItem(CYCLE_ID_STORAGE_KEY)
+      setCurrentCycleId(null)
     } catch (e) {
       show(_friendlyError(e), 'error')
+      localStorage.removeItem(CYCLE_ID_STORAGE_KEY)
+      setCurrentCycleId(null)
     }
   })
 
@@ -183,7 +215,7 @@ export function AgentScreen() {
     }
   })
 
-  const isBusy = isRunning || (isPaused && !pendingArticle)
+  const isBusy = running || isRunning || (isPaused && !pendingArticle)
 
   return (
     <div className="p-6 md:p-8 max-w-4xl">

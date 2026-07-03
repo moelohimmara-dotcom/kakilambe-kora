@@ -18,10 +18,14 @@ export const BASE_URL = BASE
 
 // ── Agent ────────────────────────────────────────────────────────────────────
 export const agentApi = {
-  run: (mode: 'auto' | 'semi') =>
-    request<{ cycle_id: string; status: string }>('/api/agent/run', {
+  // Bloquant côté backend jusqu'à la pause HITL (mode semi) ou la fin du
+  // cycle (mode auto) — cycle_id généré ici plutôt que côté serveur pour que
+  // l'appelant puisse annuler (/agent/cancel/{cycleId}) pendant l'attente,
+  // avant même d'avoir reçu cette réponse.
+  run: (mode: 'auto' | 'semi', cycleId: string) =>
+    request<{ cycle_id: string; status: string; article_id?: string; published_count?: number }>('/api/agent/run', {
       method: 'POST',
-      body: JSON.stringify({ mode }),
+      body: JSON.stringify({ mode, cycle_id: cycleId }),
     }),
   status: (cycleId?: string) =>
     request<Record<string, unknown>>(`/api/agent/status${cycleId ? `?cycle_id=${cycleId}` : ''}`),
