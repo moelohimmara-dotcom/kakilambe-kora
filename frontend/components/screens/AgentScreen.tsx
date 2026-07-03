@@ -95,38 +95,67 @@ export function AgentScreen() {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [logs])
 
+  // useMutation avale les erreurs en silence (les stocke dans son `error`
+  // interne sans les afficher) — sans try/catch explicite ici, un échec
+  // réseau ou un 404 ne produit AUCUN retour visible : ni succès, ni erreur,
+  // le clic semble juste "ne rien faire". C'était le vrai bug derrière
+  // "les boutons ne s'exécutent pas jusqu'au bout".
+  function _friendlyError(e: unknown): string {
+    const msg = e instanceof Error ? e.message : String(e)
+    if (msg.includes('404') || msg.toLowerCase().includes('non trouvé')) {
+      return "Ce cycle n'est plus actif en mémoire (le backend a probablement redémarré depuis sa mise en pause). Utilise la page Articles pour approuver/rejeter directement l'article en attente."
+    }
+    return msg
+  }
+
   const { mutate: runCycle, loading: running } = useMutation(async () => {
-    setLogs([])
-    const result = await agentApi.run(mode)
-    const r = result as { cycle_id: string }
-    setCurrentCycleId(r.cycle_id)
-    addLog({ level: 'INFO', event: `Cycle ${mode.toUpperCase()} démarré — ID: ${r.cycle_id.slice(0, 8)}` })
-    show(`Cycle ${mode} lancé`, 'success')
-    await refetchStatus()
+    try {
+      setLogs([])
+      const result = await agentApi.run(mode)
+      const r = result as { cycle_id: string }
+      setCurrentCycleId(r.cycle_id)
+      addLog({ level: 'INFO', event: `Cycle ${mode.toUpperCase()} démarré — ID: ${r.cycle_id.slice(0, 8)}` })
+      show(`Cycle ${mode} lancé`, 'success')
+      await refetchStatus()
+    } catch (e) {
+      show(_friendlyError(e), 'error')
+    }
   })
 
   const { mutate: resumeCycle, loading: resuming } = useMutation(async () => {
     if (!currentCycleId) return
-    await agentApi.resume(currentCycleId)
-    addLog({ level: 'HITL', event: 'Validation accordée — reprise de la publication' })
-    show('Cycle repris', 'success')
-    await refetchStatus()
+    try {
+      await agentApi.resume(currentCycleId)
+      addLog({ level: 'HITL', event: 'Validation accordée — reprise de la publication' })
+      show('Cycle repris', 'success')
+      await refetchStatus()
+    } catch (e) {
+      show(_friendlyError(e), 'error')
+    }
   })
 
   const { mutate: rejectCycle } = useMutation(async () => {
     if (!currentCycleId) return
-    await agentApi.reject(currentCycleId)
-    addLog({ level: 'HITL', event: 'Article rejeté — passage au suivant' })
-    show('Article rejeté', 'warning')
-    await refetchStatus()
+    try {
+      await agentApi.reject(currentCycleId)
+      addLog({ level: 'HITL', event: 'Article rejeté — passage au suivant' })
+      show('Article rejeté', 'warning')
+      await refetchStatus()
+    } catch (e) {
+      show(_friendlyError(e), 'error')
+    }
   })
 
   const { mutate: cancelCycle, loading: cancelling } = useMutation(async () => {
     if (!currentCycleId) return
-    await agentApi.cancel(currentCycleId)
-    addLog({ level: 'WARN', event: 'Annulation demandée par l\'utilisateur' })
-    show('Cycle annulé', 'warning')
-    await refetchStatus()
+    try {
+      await agentApi.cancel(currentCycleId)
+      addLog({ level: 'WARN', event: 'Annulation demandée par l\'utilisateur' })
+      show('Cycle annulé', 'warning')
+      await refetchStatus()
+    } catch (e) {
+      show(_friendlyError(e), 'error')
+    }
   })
 
   function addLog(entry: LogEntry) {

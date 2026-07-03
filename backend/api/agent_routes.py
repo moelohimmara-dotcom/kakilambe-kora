@@ -248,6 +248,25 @@ async def resume_cycle(cycle_id: str):
     """
     cycle = _cycles.get(cycle_id)
     if not cycle:
+        # Le registre en mémoire (_cycles) ET le checkpoint LangGraph
+        # (MemorySaver, également en mémoire) sont perdus à chaque redémarrage
+        # du backend. Si le cycle existe en base avec un statut PAUSED, c'est
+        # exactement ce cas — un simple 404 générique laissait croire à un
+        # bug de transmission d'ID, alors que la session HITL est simplement
+        # irrécupérable après redémarrage. Message explicite pour orienter
+        # vers la vraie solution (Articles → approuver/rejeter directement).
+        db_cycle = await _get_cycle_from_db(cycle_id)
+        if db_cycle and db_cycle.get("status") == "PAUSED":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Ce cycle était en pause mais sa session a été perdue "
+                    "(le backend a redémarré depuis sa mise en pause — le "
+                    "checkpoint LangGraph est en mémoire, pas persistant). "
+                    "Utilise la page Articles pour approuver ou rejeter "
+                    "directement l'article en attente."
+                ),
+            )
         raise HTTPException(status_code=404, detail="Cycle non trouvé")
     if cycle.get("status") not in ("PAUSED",):
         raise HTTPException(
@@ -277,6 +296,12 @@ async def resume_cycle(cycle_id: str):
                 if idx < len(selected):
                     new_status = "PAUSED"
                     _cycles[cycle_id]["status"] = new_status
+                    # Bug réel trouvé en testant end-to-end : published_count
+                    # n'était mis à jour QUE dans la branche COMPLETED — un
+                    # article publié avant la pause pour le suivant restait
+                    # invisible dans /status (published_count figé à 0) alors
+                    # qu'il était bien réellement publié sur WordPress.
+                    _cycles[cycle_id]["published_count"] = result.get("published_count", 0)
                     _emit_log(cycle_id, "HITL", f"Article suivant en attente ({idx+1}/{len(selected)})")
                 else:
                     new_status = "COMPLETED"
@@ -358,7 +383,19 @@ async def cancel_cycle(cycle_id: str):
 async def reject_current_article(cycle_id: str):
     """Rejette l'article en attente et passe au suivant."""
     cycle = _cycles.get(cycle_id)
-    if not cycle or cycle.get("status") != "PAUSED":
+    if not cycle:
+        db_cycle = await _get_cycle_from_db(cycle_id)
+        if db_cycle and db_cycle.get("status") == "PAUSED":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Ce cycle était en pause mais sa session a été perdue "
+                    "(le backend a redémarré). Utilise la page Articles pour "
+                    "rejeter directement l'article en attente."
+                ),
+            )
+        raise HTTPException(status_code=404, detail="Cycle non trouvé")
+    if cycle.get("status") != "PAUSED":
         raise HTTPException(status_code=400, detail="Cycle non en pause")
 
     config = {"configurable": {"thread_id": cycle_id}}
