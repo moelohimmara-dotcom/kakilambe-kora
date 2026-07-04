@@ -7,6 +7,7 @@ La catégorie WordPress est résolue de façon déterministe en Python (cf. _res
 pas devinée par le LLM — évite une mauvaise catégorisation sur le site live.
 """
 import json
+import random
 import re
 from agent.state import KoraState
 from agent.state import ArticleKORA
@@ -14,6 +15,27 @@ from core.llm_router import llm_router
 from core.logger import logger
 from db.connection import get_db
 from sqlalchemy import text
+
+# Moteur de variabilité (gouvernance éditoriale, règle 5) : un cycle
+# successif ne doit jamais lire comme un décalque du précédent. Un style
+# d'accroche est tiré au hasard à chaque rédaction et injecté comme
+# directive explicite — la règle des 5W (répondre à Qui/Quoi/Où/Quand) reste
+# non négociable, seul l'ANGLE d'attaque des deux premières phrases varie.
+_HOOK_STYLES = [
+    "attaque par les faits bruts : la première phrase pose l'action et son "
+    "acteur principal sans détour",
+    "attaque par une citation clé si une déclaration directe figure dans les "
+    "sources — sinon repli sur l'attaque par les faits",
+    "attaque par mise en contexte macro (économique, sécuritaire ou "
+    "politique) qui situe immédiatement l'événement dans son enjeu plus large",
+]
+
+
+def _domain_of(url: str) -> str:
+    try:
+        return url.split("/")[2].replace("www.", "").lower()
+    except IndexError:
+        return ""
 
 _WRITE_PROMPT = """Tu es KORA, journaliste IA expert de kakilambe.com, site d'actualité guinéen.
 Style éditorial : BBC News Africa. Ton factuel, chaleureux, direct — jamais universitaire, jamais scolaire.
@@ -32,6 +54,9 @@ RÈGLES STRUCTURELLES STRICTES :
    Où ? Quand ? — sans détour, sans mise en scène qui retarde l'information. 2 à 4 phrases au total.
    Ne résume pas l'article, donne envie de le lire, mais l'essentiel factuel doit être là dès la
    première phrase.
+   ANGLE D'ATTAQUE IMPOSÉ POUR CE CHAPEAU (varie à chaque article, ne jamais répéter le même
+   enchaînement d'un cycle à l'autre) : {hook_style}. Cet angle ne dispense JAMAIS de répondre aux
+   5W dans les deux premières phrases — il détermine seulement par quel bout entrer dans l'info.
 3. CORPS — PYRAMIDE INVERSÉE, RYTHME MOBILE-FIRST, ULTRA-SCANNABLE :
    - Ordre de hiérarchie STRICT : l'essentiel de l'actualité en premier, les détails secondaires,
      le contexte historique et les perspectives plus larges en dernier — jamais l'inverse.
@@ -57,6 +82,7 @@ RÈGLES STRUCTURELLES STRICTES :
      fait marquant, une perspective forte ou une citation de terrain — un point final, pas un résumé.
 4. Si plusieurs sources : croise les informations, enrichis l'angle, ne répète pas.
 5. Pas de plagiat : reformule, contextualise, ajoute de la valeur.
+{sources_credit_instruction}
 
 INTERDITS ABSOLUS — STYLE :
 - Transitions scolaires interdites : "En conclusion", "En résumé", "Ainsi", "Il est important de
@@ -82,7 +108,7 @@ Réponds UNIQUEMENT en JSON valide, format exact :
   "categorie_label": "Politique",
   "source_url": "{url_principale}",
   "source_nom": "{source_nom}",
-  "image_prompt": "Photorealistic wide-angle editorial photograph of... (en anglais, descriptif, sans texte ni logo)"
+  "image_prompt": "Photorealistic editorial photograph of... (en anglais, descriptif, sans texte ni logo). Décris systématiquement : le sujet/scène précis de CET article, un style photojournalisme, un éclairage cohérent avec l'ambiance du sujet (dramatique pour une actualité tendue, naturel et lumineux pour du positif), un angle de caméra qui sert le sujet (plongée, contre-plongée, plan large selon le contexte), des couleurs réalistes. Chaque article a un sujet différent : ce prompt doit être unique et ne jamais réutiliser une scène ou une composition déjà décrite pour un autre article."
 }}
 """
 
@@ -247,10 +273,32 @@ async def _write_with_retry(article: dict) -> ArticleKORA:
     sources_section, url, source_nom = _build_sources_section(article)
     titre = article.get("title", "Article sans titre")
 
+    # Créditation transparente des sources agrégées (règle de gouvernance
+    # éditoriale n°4 : un article de synthèse cross-média doit nommer
+    # explicitement chaque source ayant contribué, pas seulement les
+    # paraphraser silencieusement).
+    extras = article.get("aggregated_sources", [])
+    if extras:
+        credit_names = [source_nom] + [
+            s.get("source") or _domain_of(s.get("url", "")) or "source complémentaire"
+            for s in extras
+        ]
+        sources_credit_instruction = (
+            "6. SOURCES MULTIPLES — CRÉDITATION OBLIGATOIRE : cet article synthétise "
+            f"{len(credit_names)} sources ({', '.join(credit_names)}). Le chapeau ou le premier "
+            "paragraphe du corps doit citer explicitement ces sources par leur nom, avec une formule "
+            "de recoupement transparente (ex: \"Selon les recoupements de "
+            f"{' et '.join(credit_names)}...\"). Jamais de synthèse silencieuse qui n'attribue rien."
+        )
+    else:
+        sources_credit_instruction = ""
+
     prompt = _WRITE_PROMPT.format(
         sources_section=sources_section,
         url_principale=url,
         source_nom=source_nom,
+        hook_style=random.choice(_HOOK_STYLES),
+        sources_credit_instruction=sources_credit_instruction,
     )
 
     last_err = None

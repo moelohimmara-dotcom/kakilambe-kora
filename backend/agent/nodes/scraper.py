@@ -3,8 +3,20 @@ NŒUD 1 — scrape_sources
 Collecte les articles depuis Tavily (recherche) + Firecrawl (contenu Markdown).
 Fallback BrightData si Firecrawl échoue.
 Cible : 20 articles collectés.
+
+Périmètre strict (gouvernance éditoriale) :
+- Focalisation exclusive sur les sources officielles configurées
+  (rss_sources) — la requête de secours n'est utilisée QUE si aucune
+  source active n'existe en base, jamais en complément de sources réelles.
+- Fraîcheur Jour-J : Tavily interrogé avec topic="news" + days=1, et un
+  second filtre défensif sur published_date écarte tout résultat non daté
+  d'aujourd'hui quand cette information est disponible.
+- Anti-duplication inter-cycles : toute URL déjà ingérée (raw_feeds, tous
+  cycles confondus) ou déjà transformée en article (articles.source_url)
+  est exclue avant même l'enrichissement — jamais retraitée.
 """
 import asyncio
+from datetime import datetime, timezone, timedelta
 from typing import List
 from agent.state import KoraState
 from core.logger import logger
@@ -12,12 +24,16 @@ from db.connection import get_db
 from sqlalchemy import text
 
 
-# Requêtes de secours si aucune source RSS n'est configurée en base
+# Requête de secours — utilisée UNIQUEMENT si aucune source RSS active
+# n'est configurée en base (sinon le cycle n'aurait tout simplement aucun
+# candidat). Jamais lancée en complément de sources réelles configurées.
 _FALLBACK_QUERIES = [
     "actualité Guinée Conakry aujourd'hui",
     "Guinea Conakry news today",
     "Afrique de l'Ouest dernières nouvelles",
 ]
+
+_FRESHNESS_WINDOW = timedelta(hours=24)
 
 
 def _domain_of(url: str) -> str:
@@ -39,6 +55,49 @@ async def _load_sources_from_db() -> list[dict]:
     except Exception as e:
         logger.warning("scraper_db_sources_failed", error=str(e))
         return []
+
+
+async def _load_seen_urls() -> set:
+    """
+    URLs déjà exploitées lors d'un cycle précédent (raw_feeds, tous batch_id
+    confondus) ou déjà transformées en article publié/rédigé (articles) —
+    barrière anti-duplication inter-cycles. Best-effort : une panne ici ne
+    doit jamais bloquer un cycle, au pire on retraite une source déjà vue.
+    """
+    try:
+        async with get_db() as db:
+            result = await db.execute(
+                text("""
+                    SELECT source_url AS url FROM raw_feeds WHERE source_url IS NOT NULL
+                    UNION
+                    SELECT source_url AS url FROM articles WHERE source_url IS NOT NULL
+                """)
+            )
+            return {r["url"] for r in result.mappings().all() if r["url"]}
+    except Exception as e:
+        logger.warning("scraper_seen_urls_failed", error=str(e))
+        return set()
+
+
+def _is_fresh(result: dict) -> bool:
+    """
+    Écarte un résultat dont la date de publication Tavily (published_date,
+    présent quand topic="news") est antérieure à la fenêtre Jour-J. Absence
+    de date : on laisse passer (site: scoped queries sur médias africains
+    n'exposent pas toujours ce champ) plutôt que de vider le pipeline sur une
+    donnée manquante — le filtre serveur Tavily (days=1) reste la barrière
+    principale, ceci n'est qu'une seconde couche défensive.
+    """
+    raw_date = result.get("published_date")
+    if not raw_date:
+        return True
+    try:
+        published = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - published) <= _FRESHNESS_WINDOW
+    except (ValueError, AttributeError):
+        return True
 
 
 async def _persist_raw_feeds(batch_id: str, articles: list[dict]) -> None:
@@ -120,13 +179,16 @@ async def run(state: KoraState) -> KoraState:
     else:
         logger.info("scraper_using_fallback_queries")
 
-    # 1b. Requêtes de secours (toujours exécutées pour compléter le volume)
-    queries = _FALLBACK_QUERIES if not db_sources else _FALLBACK_QUERIES[:1]
+    # 1b. Requête de secours — SEULEMENT si aucune source officielle n'est
+    # configurée (périmètre strict, cf. docstring du module). Plus de
+    # complément systématique hors liste blanche quand des sources existent.
+    queries = _FALLBACK_QUERIES if not db_sources else []
 
     # Recherches Tavily par source ET requêtes de secours dispatchées en
     # parallèle (bornées par un sémaphore, comme l'enrichissement Firecrawl
     # ci-dessous) — indépendantes les unes des autres, aucune raison de les
-    # enchaîner séquentiellement.
+    # enchaîner séquentiellement. topic="news" + days=1 : filtre de fraîcheur
+    # Jour-J appliqué nativement par Tavily (cf. tavily_client.search).
     search_semaphore = asyncio.Semaphore(_SEARCH_CONCURRENCY)
 
     async def _search_source(source: dict) -> list[dict]:
@@ -137,6 +199,8 @@ async def run(state: KoraState) -> KoraState:
                 return await tavily_client.search(
                     f"site:{_domain_of(url)} actualité Guinée",
                     max_results=max_results,
+                    topic="news",
+                    days=1,
                 )
             except Exception as e:
                 logger.warning("tavily_source_failed", url=url, error=str(e))
@@ -145,7 +209,7 @@ async def run(state: KoraState) -> KoraState:
     async def _search_query(query: str) -> list[dict]:
         async with search_semaphore:
             try:
-                return await tavily_client.search(query, max_results=5)
+                return await tavily_client.search(query, max_results=5, topic="news", days=1)
             except Exception as e:
                 logger.warning("tavily_query_failed", query=query, error=str(e))
                 state["errors"].append(f"Tavily: {query} — {e}")
@@ -158,12 +222,27 @@ async def run(state: KoraState) -> KoraState:
     for results in search_results:
         all_results.extend(results)
 
-    # Dédoublonnage par URL
+    # Filtre Jour-J défensif (seconde couche derrière days=1 côté Tavily)
+    stale_count = sum(1 for r in all_results if not _is_fresh(r))
+    all_results = [r for r in all_results if _is_fresh(r)]
+    if stale_count:
+        logger.info("scraper_stale_results_dropped", cycle_id=state["cycle_id"], count=stale_count)
+
+    # Anti-duplication inter-cycles : exclut toute URL déjà ingérée
+    # (raw_feeds, tous cycles) ou déjà transformée en article — jamais
+    # retraitée deux fois.
+    seen_urls = await _load_seen_urls()
+    already_seen_count = sum(1 for r in all_results if r.get("url", "") in seen_urls)
+    if already_seen_count:
+        logger.info("scraper_already_seen_dropped", cycle_id=state["cycle_id"], count=already_seen_count)
+
+    # Dédoublonnage par URL (au sein de ce cycle) + exclusion des URLs
+    # historiques
     seen: set = set()
     unique: List[dict] = []
     for r in all_results:
         url = r.get("url", "")
-        if url and url not in seen:
+        if url and url not in seen and url not in seen_urls:
             seen.add(url)
             unique.append(r)
 

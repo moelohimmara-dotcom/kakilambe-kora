@@ -16,23 +16,34 @@ class TavilyClient:
         max_results: int = 10,
         search_depth: str = "advanced",
         timeout: float = 20,
+        topic: Optional[str] = None,
+        days: Optional[int] = None,
     ) -> List[dict]:
-        """Appel direct à l'API Tavily via httpx — évite la dépendance cohere du SDK."""
+        """
+        Appel direct à l'API Tavily via httpx — évite la dépendance cohere du SDK.
+
+        topic="news" + days=1 : active le filtre de fraîcheur natif de Tavily
+        (résultats des dernières 24h uniquement) et fait apparaître le champ
+        `published_date` sur chaque résultat, exploité ensuite pour un second
+        filtre défensif côté scraper (cf. agent/nodes/scraper.py).
+        """
         if not self.api_key:
             logger.error("tavily_no_api_key")
             return []
         try:
+            payload = {
+                "api_key": self.api_key,
+                "query": query,
+                "max_results": max_results,
+                "search_depth": search_depth,
+                "include_raw_content": False,
+            }
+            if topic:
+                payload["topic"] = topic
+            if days is not None:
+                payload["days"] = days
             async with httpx.AsyncClient(timeout=timeout) as client:
-                r = await client.post(
-                    _TAVILY_API_URL,
-                    json={
-                        "api_key": self.api_key,
-                        "query": query,
-                        "max_results": max_results,
-                        "search_depth": search_depth,
-                        "include_raw_content": False,
-                    },
-                )
+                r = await client.post(_TAVILY_API_URL, json=payload)
                 r.raise_for_status()
                 return r.json().get("results", [])
         except Exception as e:
