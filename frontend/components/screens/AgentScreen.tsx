@@ -22,6 +22,21 @@ interface CycleState {
 
 const CYCLE_ID_STORAGE_KEY = 'kora_current_cycle_id'
 
+// Micro-messages chaleureux affichés pendant l'attente réelle du cycle (le
+// scraping, l'inférence LLM et la génération d'image restent des appels
+// réseau/inférence de plusieurs secondes chacun — aucune parallélisation
+// frontend ne peut compresser ça sous 1s, ce texte sert uniquement à
+// maintenir l'attention pendant une attente réelle, pas à la masquer).
+const _LOADING_MESSAGES = [
+  "KORA scanne les dernières actus de Guinée pour vous…",
+  "Extraction des meilleures sources en cours, un instant…",
+  "Sélection de l'article le plus pertinent du moment…",
+  "KORA affine la plume journalistique de votre article…",
+  "Structuration en pyramide inversée, façon BBC Afrique…",
+  "Génération de l'image d'illustration…",
+  "Presque prêt ! Dernière vérification stylistique…",
+]
+
 // Combien de temps on tolère un cycle PAUSED sans parvenir à résoudre
 // l'article concret associé (cas limite : redémarrage backend pile à ce
 // moment) avant d'abandonner l'attente plutôt que de bloquer l'utilisateur
@@ -257,6 +272,33 @@ export function AgentScreen() {
   // éviter un double appel concurrent depuis le même onglet.
   const isBusy = running || isRunning
 
+  // Rotation des micro-messages d'attente — fade-out (250ms) puis changement
+  // de message puis fade-in, toutes les ~1.3s tant que l'écran de transition
+  // est affiché. Se réinitialise proprement dès la fin du cycle (isBusy
+  // redevient false) pour repartir du premier message au prochain lancement.
+  const [loadingMsgIndex, setLoadingMsgIndex] = useState(0)
+  const [loadingMsgFading, setLoadingMsgFading] = useState(false)
+  const loadingMsgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (!isBusy) {
+      setLoadingMsgIndex(0)
+      setLoadingMsgFading(false)
+      return
+    }
+    const interval = setInterval(() => {
+      setLoadingMsgFading(true)
+      loadingMsgTimerRef.current = setTimeout(() => {
+        setLoadingMsgIndex(i => (i + 1) % _LOADING_MESSAGES.length)
+        setLoadingMsgFading(false)
+      }, 250)
+    }, 1300)
+    return () => {
+      clearInterval(interval)
+      if (loadingMsgTimerRef.current) clearTimeout(loadingMsgTimerRef.current)
+    }
+  }, [isBusy])
+
   return (
     <div className="p-6 md:p-8 max-w-4xl">
       {/* Header */}
@@ -363,9 +405,11 @@ export function AgentScreen() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-cream/95 backdrop-blur-sm">
           <div className="flex flex-col items-center text-center px-6 max-w-md">
             <Spinner size="lg" />
-            <h2 className="font-heading font-semibold text-[16px] text-anthracite mt-6 mb-2">
+            <h2
+              className={`font-heading font-semibold text-[16px] text-anthracite mt-6 mb-2 transition-opacity duration-300 ${isRunning && loadingMsgFading ? 'opacity-0' : 'opacity-100'}`}
+            >
               {isRunning
-                ? 'KORA explore les sources et rédige votre prochain article…'
+                ? _LOADING_MESSAGES[loadingMsgIndex]
                 : "Article rédigé — préparation de la page de validation…"}
             </h2>
             <p className="font-heading text-[13px] text-gray-dk mb-6">

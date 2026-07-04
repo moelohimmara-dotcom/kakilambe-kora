@@ -9,6 +9,7 @@ POST /api/agent/cancel/{id}   → Kill switch : annule le cycle en cours
 import uuid
 import json
 import asyncio
+import time
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -96,9 +97,19 @@ async def run_cycle(body: RunRequest):
     async def _run():
         from agent.graph import kora_graph_semi, kora_graph_auto
         kora_graph = kora_graph_semi if body.mode == "semi" else kora_graph_auto
+        # Chronométrage réel du cycle — scraping (API Tavily), sélection/
+        # rédaction (LLM) et génération d'image (Fal.ai) sont des appels
+        # réseau/inférence externes de plusieurs secondes chacun, pas des
+        # inefficacités du code : ce log donne une mesure honnête plutôt
+        # qu'une estimation, pour piloter de vraies décisions d'optimisation
+        # au lieu d'un objectif de latence irréaliste.
+        t0 = time.perf_counter()
         try:
             _emit_log(cycle_id, "INFO", f"Cycle {body.mode.upper()} démarré")
             result = await kora_graph.ainvoke(initial_state, config=config)
+            elapsed = time.perf_counter() - t0
+            _cycles[cycle_id]["elapsed_seconds"] = round(elapsed, 1)
+            logger.info("cycle_timing", cycle_id=cycle_id, mode=body.mode, elapsed_seconds=round(elapsed, 1))
 
             if body.mode == "semi":
                 _cycles[cycle_id]["status"] = "PAUSED"
@@ -162,6 +173,7 @@ async def run_cycle(body: RunRequest):
             "status": "PAUSED",
             "mode": body.mode,
             "article_id": final.get("article_id"),
+            "elapsed_seconds": final.get("elapsed_seconds"),
             "message": "Article prêt pour validation" if final.get("article_id") else "Cycle en pause, article introuvable automatiquement",
         }
     if status == "COMPLETED":
@@ -170,6 +182,7 @@ async def run_cycle(body: RunRequest):
             "status": "COMPLETED",
             "mode": body.mode,
             "published_count": final.get("published_count", 0),
+            "elapsed_seconds": final.get("elapsed_seconds"),
         }
     if status == "CANCELLED":
         raise HTTPException(status_code=409, detail="Cycle annulé")
