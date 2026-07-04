@@ -1,7 +1,9 @@
 """
 NŒUD 1 — scrape_sources
 Collecte les articles depuis Tavily (recherche) + Firecrawl (contenu Markdown).
-Fallback BrightData si Firecrawl échoue.
+BrightData abandonné (décision explicite) : si Firecrawl échoue, l'article
+retombe sur l'extrait brut déjà fourni par Tavily (cf. enrich()) plutôt que
+sur un second scraper.
 Cible : 20 articles collectés.
 
 Périmètre strict (gouvernance éditoriale) :
@@ -140,22 +142,18 @@ _SEARCH_CONCURRENCY = 4  # max requêtes Tavily simultanées — même palier qu
 
 
 async def _fetch_content(url: str) -> str:
-    """Récupère le contenu Markdown d'une URL via Firecrawl, fallback BrightData."""
+    """
+    Récupère le contenu Markdown d'une URL via Firecrawl. BrightData
+    abandonné (décision explicite, identifiants proxy invalides en
+    production) — en cas d'échec, enrich() retombe sur l'extrait Tavily déjà
+    disponible plutôt que sur un second scraper.
+    """
     from integrations.firecrawl_client import firecrawl_client
-    from integrations.brightdata_client import brightdata_client
 
     content = await asyncio.wait_for(
         firecrawl_client.scrape(url), timeout=_SCRAPE_TIMEOUT
     )
-    if content and len(content.strip()) > 200:
-        return content
-
-    # Fallback BrightData
-    logger.warning("firecrawl_fallback", url=url)
-    html = await asyncio.wait_for(
-        brightdata_client.fetch(url), timeout=_SCRAPE_TIMEOUT
-    )
-    return html or ""
+    return content or ""
 
 
 async def run(state: KoraState) -> KoraState:

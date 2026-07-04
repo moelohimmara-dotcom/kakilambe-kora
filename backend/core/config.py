@@ -33,10 +33,11 @@ class Settings(BaseSettings):
     REDIS_URL: str = ""
 
     # ── Scraping ─────────────────────────────────────────────────────────────
+    # BrightData abandonné (identifiants proxy invalides en production,
+    # décision explicite) — Firecrawl seul, repli sur l'extrait Tavily brut
+    # en cas d'échec (cf. agent/nodes/scraper.py).
     TAVILY_API_KEY: str = ""
     FIRECRAWL_API_KEY: str = ""
-    BRIGHTDATA_API_KEY: str = ""
-    BRIGHTDATA_ZONE: str = "unlocker"
 
     # ── WordPress ────────────────────────────────────────────────────────────
     WP_BASE_URL: str = "https://kakilambe.com"
