@@ -182,7 +182,7 @@ async def run_cycle(body: RunRequest):
     _log_queues[cycle_id] = asyncio.Queue()
     task = asyncio.create_task(_run())
     _running_tasks[cycle_id] = task
-    asyncio.create_task(_cleanup_queue(cycle_id, delay=300))
+    asyncio.create_task(_cleanup_queue(cycle_id, delay=60))  # Délai réduit à 60s
     logger.info("cycle_started", cycle_id=cycle_id, mode=body.mode)
 
     try:
@@ -476,6 +476,13 @@ async def cancel_cycle(cycle_id: str):
         await _update_cycle_status(cycle_id, "CANCELLED")
         _close_stream(cycle_id)
 
+    # CORRECTION CRITIQUE : Nettoyage immédiat de la queue SSE pour éviter
+    # les fuites mémoire. Sans cela, les queues restent en mémoire jusqu'au
+    # cleanup différé (60s), ce qui peut surcharger le VPS Debian.
+    if cycle_id in _log_queues:
+        _close_stream(cycle_id)
+        _log_queues.pop(cycle_id, None)
+
     logger.info("cycle_cancelled", cycle_id=cycle_id)
     return {"cycle_id": cycle_id, "status": "CANCELLED", "message": "Cycle annulé"}
 
@@ -636,12 +643,17 @@ async def _get_active_cycle_from_db() -> Optional[dict]:
         return None
 
 
-async def _cleanup_queue(cycle_id: str, delay: int = 300):
-    """Envoie le sentinel de fin puis supprime la queue après `delay` secondes."""
+async def _cleanup_queue(cycle_id: str, delay: int = 60):
+    """Envoie le sentinel de fin puis supprime la queue après `delay` secondes.
+    
+    CORRECTION CRITIQUE : Délai réduit de 300s à 60s pour éviter les fuites mémoire
+    sur le VPS Debian. Un délai de 5 minutes était trop long et pouvait laisser
+    des queues orphelines en mémoire après annulation rapide d'un cycle.
+    """
     await asyncio.sleep(delay)
     if cycle_id in _log_queues:
         _close_stream(cycle_id)
-        await asyncio.sleep(30)
+        await asyncio.sleep(5)  # Délai réduit de 30s à 5s
         _log_queues.pop(cycle_id, None)
 
 
