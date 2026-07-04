@@ -216,9 +216,23 @@ export function AgentScreen() {
         return
       }
       if (result.status === 'PAUSED') {
+        // Ne devrait plus arriver en pratique : le backend ne marque PAUSED
+        // que si LangGraph a réellement atteint l'interruption HITL (vérifié
+        // via aget_state().next), ce qui garantit un article_id. Gardé en
+        // filet de sécurité pour un cas limite non anticipé.
         show("Article prêt mais introuvable automatiquement — consulte l'onglet Articles.", 'warning')
       } else if (result.status === 'COMPLETED') {
-        show(`Cycle terminé — ${result.published_count ?? 0} article(s) publié(s)`, 'success')
+        if (mode === 'semi' && (result.published_count ?? 0) === 0) {
+          // Root cause corrigée côté backend : le graphe peut terminer
+          // normalement (END) sans jamais produire d'article — 0 candidat
+          // retenu par le sélecteur, ou échec de rédaction sur tous les
+          // articles sélectionnés. Message honnête plutôt que le "0
+          // article(s) publié(s)" trompeur (qui laissait croire à un succès
+          // partiel alors que rien n'a été rédigé).
+          show("Cycle terminé sans article produit — aucune actualité pertinente retenue cette fois. Réessayez plus tard.", 'warning')
+        } else {
+          show(`Cycle terminé — ${result.published_count ?? 0} article(s) publié(s)`, 'success')
+        }
       }
       localStorage.removeItem(CYCLE_ID_STORAGE_KEY)
       setCurrentCycleId(null)

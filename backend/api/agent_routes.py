@@ -112,13 +112,43 @@ async def run_cycle(body: RunRequest):
             logger.info("cycle_timing", cycle_id=cycle_id, mode=body.mode, elapsed_seconds=round(elapsed, 1))
 
             if body.mode == "semi":
-                _cycles[cycle_id]["status"] = "PAUSED"
-                # article_id nécessaire au frontend pour rediriger directement
-                # vers /articles/{id} dès la réponse de /run — sans lui, la
-                # redirection instantanée demandée n'a pas de cible.
-                _cycles[cycle_id]["article_id"] = ((result or {}).get("generated_article") or {}).get("db_id")
-                _emit_log(cycle_id, "HITL", "Article prêt — en attente de validation humaine")
-                await _update_cycle_status(cycle_id, "PAUSED")
+                # Root cause du bug "Article prêt mais introuvable" : mode
+                # "semi" ne veut PAS dire "le graphe s'est interrompu". Si la
+                # sélection ne retient aucun article (0 candidat pertinent)
+                # ou si la rédaction échoue pour TOUS les articles
+                # sélectionnés, le graphe route directement vers
+                # send_report → END (cf. graph.py: _route_after_select,
+                # _check_next) — interrupt_before=["publish_wordpress"] n'est
+                # alors jamais atteint, ainvoke() revient normalement avec
+                # generated_article=None. L'ancien code marquait quand même
+                # le cycle PAUSED dans ce cas (confondant "mode semi" et
+                # "graphe interrompu"), d'où un article_id structurellement
+                # absent — pas un incident réseau/timeout comme le rapport le
+                # supposait. Vérification fiable : interroger l'état réel du
+                # graphe via aget_state().next, qui n'est non-vide QUE si
+                # LangGraph a effectivement suspendu l'exécution avant un
+                # nœud (ici publish_wordpress).
+                snapshot = await kora_graph.aget_state(config)
+                really_interrupted = bool(snapshot.next)
+
+                if really_interrupted:
+                    _cycles[cycle_id]["status"] = "PAUSED"
+                    # article_id nécessaire au frontend pour rediriger
+                    # directement vers /articles/{id} dès la réponse de
+                    # /run — sans lui, la redirection instantanée demandée
+                    # n'a pas de cible.
+                    _cycles[cycle_id]["article_id"] = ((result or {}).get("generated_article") or {}).get("db_id")
+                    _emit_log(cycle_id, "HITL", "Article prêt — en attente de validation humaine")
+                    await _update_cycle_status(cycle_id, "PAUSED")
+                else:
+                    # Le graphe a réellement terminé (END) sans jamais
+                    # produire d'article à valider — cycle honnêtement vide,
+                    # pas une pause fantôme.
+                    _cycles[cycle_id]["status"] = "COMPLETED"
+                    _cycles[cycle_id]["article_id"] = None
+                    _emit_log(cycle_id, "WARN", "Cycle terminé sans article produit (0 candidat retenu ou échec de rédaction)")
+                    await _update_cycle_status(cycle_id, "COMPLETED")
+                    _close_stream(cycle_id)
             else:
                 _cycles[cycle_id]["status"] = "COMPLETED"
                 _emit_log(cycle_id, "OK", "Cycle autonome complété")
