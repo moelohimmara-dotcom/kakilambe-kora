@@ -104,34 +104,35 @@ export function AgentScreen() {
   }, [isPaused, cycle?.cycle_id, currentCycleId])
   const { data: pendingArticle } = useAsync(fetchPendingArticle, [isPaused, cycle?.cycle_id])
 
-  // Redirection automatique vers la page de révision dès que l'article
-  // concret est résolu — cœur du nouveau parcours "on-demand" : l'utilisateur
-  // ne voit plus jamais /agent pendant l'attente, il atterrit directement là
-  // où l'action l'attend.
+  // Bug corrigé : cet effet redirigeait AUTOMATIQUEMENT vers l'article dès
+  // qu'il détectait isPaused+pendingArticle — y compris quand l'utilisateur
+  // arrivait sur /agent par une navigation VOLONTAIRE (clic sur le menu)
+  // alors qu'un cycle d'une session précédente était encore en PAUSED avec
+  // son article toujours PENDING_REVIEW (rien n'ayant changé son statut
+  // entretemps). Résultat : impossible de revenir sur le tableau de bord
+  // tant que l'article n'était pas traité — l'utilisateur était renvoyé de
+  // force vers l'article à chaque tentative. La redirection instantanée
+  // voulue par le parcours "on-demand" reste gérée directement dans
+  // runCycle() ci-dessous (déclenchée UNIQUEMENT par l'action de LANCER un
+  // cycle, jamais par une simple visite de /agent). Cet effet se contente
+  // désormais d'informer sans jamais naviguer de force.
   useEffect(() => {
     if (!isPaused) {
-      if (!isPaused) pendingSinceRef.current = null
+      pendingSinceRef.current = null
       return
     }
     if (pendingSinceRef.current === null) pendingSinceRef.current = Date.now()
 
-    const cid = cycle?.cycle_id ?? currentCycleId
-    if (pendingArticle && cid && redirectedForCycleRef.current !== cid) {
-      redirectedForCycleRef.current = cid
-      router.push(`/articles/${pendingArticle.id}`)
-      return
-    }
-
     // Cas limite : PAUSED confirmé mais aucun article résolu après un délai
     // raisonnable (ex. redémarrage backend pile à ce moment) — on informe
-    // plutôt que de laisser l'écran de chargement tourner indéfiniment.
+    // plutôt que de laisser un état incohérent silencieux.
     if (!pendingArticle && Date.now() - (pendingSinceRef.current ?? Date.now()) > PENDING_ARTICLE_RESOLUTION_TIMEOUT_MS) {
       show("Article prêt mais introuvable automatiquement — consulte l'onglet Articles.", 'warning')
       localStorage.removeItem(CYCLE_ID_STORAGE_KEY)
       setCurrentCycleId(null)
       pendingSinceRef.current = null
     }
-  }, [isPaused, pendingArticle, cycle?.cycle_id, currentCycleId, router, show])
+  }, [isPaused, pendingArticle, show])
 
   useEffect(() => {
     if (isFailed) {
@@ -285,6 +286,23 @@ export function AgentScreen() {
           )}
         </Card>
       </div>
+
+      {/* Bannière passive — jamais de navigation forcée : contrairement à la
+          redirection instantanée de runCycle() (déclenchée par l'action de
+          l'utilisateur), ceci ne fait qu'informer si un cycle d'une session
+          précédente est toujours en pause en arrivant sur cette page. */}
+      {!isBusy && isPaused && pendingArticle && (
+        <Card className="mb-6 border-orange/30 bg-orange/5">
+          <div className="flex items-center justify-between gap-4">
+            <p className="font-heading text-[13px] text-anthracite">
+              Un article rédigé lors d'un cycle précédent attend toujours votre validation.
+            </p>
+            <Button href={`/articles/${pendingArticle.id}`} variant="outline" size="sm">
+              Lire l'article →
+            </Button>
+          </div>
+        </Card>
+      )}
 
       {/* Écran de transition plein écran — remplace la console de logs.
           Reste affiché tant qu'on n'a pas pu rediriger vers l'article concret,

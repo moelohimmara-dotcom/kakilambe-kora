@@ -71,6 +71,13 @@ async def _persist_raw_feeds(batch_id: str, articles: list[dict]) -> None:
 _MAX_ARTICLES = 8      # réduit pour free tier (mémoire 512MB)
 _SCRAPE_TIMEOUT = 15   # secondes par URL
 _ENRICH_CONCURRENCY = 4  # max requêtes Firecrawl simultanées
+_SEARCH_CONCURRENCY = 4  # max requêtes Tavily simultanées — même palier que
+                          # Firecrawl ci-dessus ; les recherches par source
+                          # étaient auparavant enchaînées une par une avec
+                          # `await` en boucle, ce qui ajoutait la latence de
+                          # CHAQUE appel Tavily bout à bout (souvent 5 à 15
+                          # sources) au temps total du cycle pour rien, cet
+                          # appel n'ayant aucune dépendance entre sources.
 
 
 async def _fetch_content(url: str) -> str:
@@ -110,29 +117,46 @@ async def run(state: KoraState) -> KoraState:
             level1=sum(1 for s in db_sources if s["level"] == 1),
             level2=sum(1 for s in db_sources if s["level"] == 2),
         )
-        for source in db_sources:
-            url = source["url"]
-            max_results = 4 if source["level"] == 1 else 2
-            try:
-                results = await tavily_client.search(
-                    f"site:{_domain_of(url)} actualité Guinée",
-                    max_results=max_results,
-                )
-                all_results.extend(results)
-            except Exception as e:
-                logger.warning("tavily_source_failed", url=url, error=str(e))
     else:
         logger.info("scraper_using_fallback_queries")
 
     # 1b. Requêtes de secours (toujours exécutées pour compléter le volume)
     queries = _FALLBACK_QUERIES if not db_sources else _FALLBACK_QUERIES[:1]
-    for query in queries:
-        try:
-            results = await tavily_client.search(query, max_results=5)
-            all_results.extend(results)
-        except Exception as e:
-            logger.warning("tavily_query_failed", query=query, error=str(e))
-            state["errors"].append(f"Tavily: {query} — {e}")
+
+    # Recherches Tavily par source ET requêtes de secours dispatchées en
+    # parallèle (bornées par un sémaphore, comme l'enrichissement Firecrawl
+    # ci-dessous) — indépendantes les unes des autres, aucune raison de les
+    # enchaîner séquentiellement.
+    search_semaphore = asyncio.Semaphore(_SEARCH_CONCURRENCY)
+
+    async def _search_source(source: dict) -> list[dict]:
+        url = source["url"]
+        max_results = 4 if source["level"] == 1 else 2
+        async with search_semaphore:
+            try:
+                return await tavily_client.search(
+                    f"site:{_domain_of(url)} actualité Guinée",
+                    max_results=max_results,
+                )
+            except Exception as e:
+                logger.warning("tavily_source_failed", url=url, error=str(e))
+                return []
+
+    async def _search_query(query: str) -> list[dict]:
+        async with search_semaphore:
+            try:
+                return await tavily_client.search(query, max_results=5)
+            except Exception as e:
+                logger.warning("tavily_query_failed", query=query, error=str(e))
+                state["errors"].append(f"Tavily: {query} — {e}")
+                return []
+
+    search_results = await asyncio.gather(
+        *[_search_source(s) for s in db_sources],
+        *[_search_query(q) for q in queries],
+    )
+    for results in search_results:
+        all_results.extend(results)
 
     # Dédoublonnage par URL
     seen: set = set()
