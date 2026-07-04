@@ -216,7 +216,24 @@ export function AgentScreen() {
     }
   })
 
-  const isBusy = running || isRunning || (isPaused && !pendingArticle)
+  // Root cause du clignotement au clic sur "Retour" (rapport d'incident) :
+  // isBusy incluait `isPaused && !pendingArticle`, vrai de façon transitoire
+  // à CHAQUE montage de /agent tant qu'un cycle réel reste en pause en base
+  // — le temps que fetchPendingArticle() résolve (un aller-retour réseau),
+  // l'overlay plein écran s'affichait avant de disparaître dès que
+  // l'article était trouvé. Reproductible à volonté avec un cycle PAUSED
+  // ambiant (ex. un article laissé en attente). Aucun état global mal
+  // nettoyé, aucun effet orphelin — useInterval() nettoie déjà correctement
+  // via clearInterval au démontage (vérifié) ; la vraie cause était cette
+  // condition composite. L'overlay plein écran ne doit représenter QUE le
+  // travail actif de CETTE session (lancement en cours ou cycle RUNNING) —
+  // jamais un cycle PAUSED ambiant découvert passivement en arrivant sur la
+  // page, qui n'est plus qu'une information passive (bannière ci-dessous).
+  const isBusy = running || isRunning
+  // Distinct de isBusy : bloque le lancement d'un nouveau cycle tant qu'un
+  // autre (RUNNING ou PAUSED, y compris ambiant) est déjà actif, sans pour
+  // autant déclencher l'overlay plein écran pour ce dernier cas.
+  const isCycleActive = isBusy || isPaused
 
   return (
     <div className="p-6 md:p-8 max-w-4xl">
@@ -247,13 +264,13 @@ export function AgentScreen() {
                 variant="primary"
                 size="md"
                 loading={running}
-                disabled={isBusy}
+                disabled={isCycleActive}
                 onClick={() => runCycle(undefined as unknown as void)}
                 className="flex-1"
               >
-                {isBusy ? 'Cycle en cours…' : 'Lancer le cycle'}
+                {isCycleActive ? 'Cycle en cours…' : 'Lancer le cycle'}
               </Button>
-              {mode === 'semi' && !running && !isBusy && (
+              {mode === 'semi' && !running && !isCycleActive && (
                 <Badge variant="orange">HITL</Badge>
               )}
             </div>
