@@ -30,6 +30,17 @@ async def lifespan(app: FastAPI):
     from core.llm_router import llm_router
     await llm_router.load_from_db()
     await start_scheduler()
+    
+    # CORRECTION CRITIQUE : Démarrer le garbage collector périodique
+    scheduler.add_job(
+        cleanup_orphaned_resources,
+        'interval',
+        minutes=30,
+        id="gc_orphaned_resources",
+        replace_existing=True,
+    )
+    logger.info("gc_scheduler_started", interval="30 minutes")
+    
     yield
     scheduler.shutdown(wait=False)
 
@@ -171,3 +182,77 @@ async def health_qstash():
     if not settings.QSTASH_CURRENT_SIGNING_KEY:
         return {"status": "error", "detail": "QSTASH_CURRENT_SIGNING_KEY not configured"}
     return {"status": "ok", "detail": "QStash token and signing key present"}
+
+
+@app.get("/health/memory", tags=["system"])
+async def health_memory():
+    """
+    CORRECTION CRITIQUE : Endpoint de monitoring mémoire pour surveiller
+    la consommation mémoire du VPS Debian et détecter les fuites.
+    """
+    try:
+        import psutil
+        mem = psutil.virtual_memory()
+        
+        # Seuil d'alerte à 80% (au lieu de 90%) pour une détection précoce
+        status = "ok" if mem.percent < 80 else "warning"
+        if mem.percent >= 90:
+            status = "error"
+            
+        return {
+            "status": status,
+            "memory_usage_percent": round(mem.percent, 2),
+            "memory_used_mb": round(mem.used / 1024 / 1024, 2),
+            "memory_available_mb": round(mem.available / 1024 / 1024, 2),
+            "memory_total_mb": round(mem.total / 1024 / 1024, 2),
+            "threshold_warning_percent": 80,
+            "threshold_error_percent": 90,
+        }
+    except ImportError:
+        return {
+            "status": "error",
+            "detail": "psutil not installed - install with: pip install psutil",
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "detail": str(e),
+        }
+
+
+# ── Garbage Collector pour tâches orphelines ────────────────────────────────
+
+async def cleanup_orphaned_resources():
+    """
+    Nettoie périodiquement les tâches et queues orphelines pour éviter les fuites mémoire.
+    
+    CORRECTION CRITIQUE : Garbage collector périodique (toutes les 30 minutes)
+    pour nettoyer les ressources non libérées correctement.
+    """
+    try:
+        from api.agent_routes import _running_tasks, _log_queues
+        
+        # Nettoyer les tâches terminées
+        completed_tasks = [
+            task_id for task_id, task in list(_running_tasks.items())
+            if task.done()
+        ]
+        for task_id in completed_tasks:
+            _running_tasks.pop(task_id, None)
+            logger.info("gc_cleaned_task", task_id=task_id)
+        
+        # Nettoyer les queues orphelines (sans tâche associée)
+        active_cycle_ids = set(_running_tasks.keys())
+        orphaned_queues = [
+            queue_id for queue_id in list(_log_queues.keys())
+            if queue_id not in active_cycle_ids
+        ]
+        for queue_id in orphaned_queues:
+            _log_queues.pop(queue_id, None)
+            logger.info("gc_cleaned_queue", queue_id=queue_id)
+            
+    except Exception as e:
+        logger.warning("gc_cleanup_failed", error=str(e))
+
+
+
