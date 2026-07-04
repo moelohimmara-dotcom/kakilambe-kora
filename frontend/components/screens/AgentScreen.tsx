@@ -159,6 +159,17 @@ export function AgentScreen() {
     return msg.includes('404') || msg.includes('409') || msg.toLowerCase().includes('non trouvé')
   }
 
+  // Bug trouvé en testant l'annulation d'un cycle réellement en cours (pas
+  // déjà en pause) : la requête bloquante POST /run se termine alors avec
+  // une 409 "Cycle annulé" — _isLostSessionError() la classait à tort comme
+  // une session perdue, affichant un toast d'erreur contradictoire en plus
+  // de celui, correct, déjà émis par cancelCycle(). Un clic volontaire sur
+  // "Annuler" ne doit jamais produire de message d'erreur.
+  function _isUserCancelled(e: unknown): boolean {
+    const msg = e instanceof Error ? e.message : String(e)
+    return msg.toLowerCase().includes('annulé')
+  }
+
   function _friendlyError(e: unknown): string {
     const msg = e instanceof Error ? e.message : String(e)
     if (_isLostSessionError(e)) {
@@ -194,7 +205,9 @@ export function AgentScreen() {
       localStorage.removeItem(CYCLE_ID_STORAGE_KEY)
       setCurrentCycleId(null)
     } catch (e) {
-      show(_friendlyError(e), 'error')
+      if (!_isUserCancelled(e)) {
+        show(_friendlyError(e), 'error')
+      }
       localStorage.removeItem(CYCLE_ID_STORAGE_KEY)
       setCurrentCycleId(null)
     }
