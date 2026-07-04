@@ -9,7 +9,6 @@ import { Badge } from '@/components/ui/Badge'
 const navItems = [
   { href: '/dashboard', label: 'Tableau de bord' },
   { href: '/articles',  label: 'Articles' },
-  { href: '/chat',      label: 'Chat IA' },
   { href: '/sources',   label: 'Sources RSS' },
   { href: '/history',   label: 'Historique' },
   { href: '/agent',     label: 'Agent KORA' },

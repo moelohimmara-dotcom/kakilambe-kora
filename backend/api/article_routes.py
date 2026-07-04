@@ -173,6 +173,110 @@ async def regenerate_image(article_id: str):
     return {"image_url": wp_image_src or image_url, "wp_media_id": wp_media_id}
 
 
+@router.post("/{article_id}/regenerate")
+async def regenerate_article(article_id: str):
+    """
+    Boucle de régénération HITL : réécrit intégralement l'article (nouvel
+    angle d'accroche, nouvelle image) à partir du contenu source d'origine,
+    sans jamais republier l'ancienne version tant que l'utilisateur n'a pas
+    validé. Ne fonctionne que sur un article pas encore publié.
+
+    Le contenu source brut n'est pas conservé dans `articles` (seule l'URL
+    l'est) — reconstruit ici depuis `raw_feeds` (même cycle_id/batch_id +
+    même source_url), où il est journalisé au moment du scraping original.
+    """
+    async with get_db() as db:
+        result = await db.execute(
+            text("""
+                SELECT id, titre, source_url, source_nom, cycle_id, status
+                FROM articles WHERE id = :id
+            """),
+            {"id": article_id},
+        )
+        row = result.mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Article non trouvé")
+    if row["status"] == "PUBLISHED":
+        raise HTTPException(status_code=400, detail="Article déjà publié — non régénérable")
+
+    async with get_db() as db:
+        raw = await db.execute(
+            text("""
+                SELECT title, content FROM raw_feeds
+                WHERE batch_id = :cycle_id AND source_url = :source_url
+                LIMIT 1
+            """),
+            {"cycle_id": row["cycle_id"], "source_url": row["source_url"]},
+        )
+        raw_row = raw.mappings().first()
+
+    if not raw_row:
+        raise HTTPException(
+            status_code=409,
+            detail="Contenu source original introuvable (raw_feeds) — régénération impossible pour cet article",
+        )
+
+    source_article = {
+        "title": raw_row["title"],
+        "url": row["source_url"],
+        "content": raw_row["content"] or "",
+        "source": row["source_nom"],
+        "aggregated_sources": [],  # non reconstitué — régénération mono-source
+    }
+
+    from agent.nodes.writer import _write_with_retry
+    from agent.nodes.illustrator import generate_and_upload_image
+
+    try:
+        rewritten = await _write_with_retry(source_article)
+    except Exception as e:
+        logger.error("article_regenerate_write_failed", article_id=article_id, error=str(e))
+        raise HTTPException(status_code=502, detail=f"Échec de la réécriture : {e}")
+
+    try:
+        image_url, wp_media_id, wp_image_src = await generate_and_upload_image(
+            rewritten.image_prompt, rewritten.titre
+        )
+    except Exception as e:
+        logger.warning("article_regenerate_image_failed", article_id=article_id, error=str(e))
+        image_url, wp_media_id, wp_image_src = None, None, None
+
+    async with get_db() as db:
+        await db.execute(
+            text("""
+                UPDATE articles SET
+                    titre = :titre, chapeau = :chapeau, corps = :corps,
+                    meta_description = :meta_description, mots_cles = :mots_cles,
+                    categorie_id = :categorie_id, image_prompt = :image_prompt,
+                    image_url = COALESCE(:image_url, image_url),
+                    wp_media_id = COALESCE(:wp_media_id, wp_media_id)
+                WHERE id = :id
+            """),
+            {
+                "titre": rewritten.titre,
+                "chapeau": rewritten.chapeau,
+                "corps": rewritten.corps,
+                "meta_description": rewritten.meta_description,
+                "mots_cles": rewritten.mots_cles,
+                "categorie_id": rewritten.categorie_wp_id,
+                "image_prompt": rewritten.image_prompt,
+                "image_url": wp_image_src or image_url,
+                "wp_media_id": wp_media_id,
+                "id": article_id,
+            },
+        )
+
+    logger.info("article_regenerated", article_id=article_id)
+    return {
+        "id": article_id,
+        "titre": rewritten.titre,
+        "chapeau": rewritten.chapeau,
+        "corps": rewritten.corps,
+        "image_url": wp_image_src or image_url,
+    }
+
+
 @router.post("/{article_id}/reject")
 async def reject_article(article_id: str):
     async with get_db() as db:

@@ -22,10 +22,13 @@ const variants: Record<Variant, string> = {
     'bg-white text-anthracite border-gray-light hover:border-orange hover:text-orange hover:-translate-y-px',
 }
 
+// min-h : cible tactile mobile (≥44-48px, WCAG/Material) — le padding et le
+// texte restent compacts visuellement, seule la zone cliquable s'agrandit
+// verticalement (Button est déjà inline-flex items-center, contenu centré).
 const sizes: Record<Size, string> = {
-  sm:  'px-3.5 py-[7px] text-[12px] rounded-sm',
-  md:  'px-5 py-[9px] text-[13px]',
-  lg:  'px-7 py-3 text-[15px] font-bold',
+  sm:  'px-3.5 py-[7px] text-[12px] rounded-sm min-h-[44px]',
+  md:  'px-5 py-[9px] text-[13px] min-h-[44px]',
+  lg:  'px-7 py-3 text-[15px] font-bold min-h-[48px]',
 }
 
 interface BaseProps {

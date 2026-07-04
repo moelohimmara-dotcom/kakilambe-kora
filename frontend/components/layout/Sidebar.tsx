@@ -24,11 +24,6 @@ const navItems: NavItem[] = [
     icon: (active) => <IconArticles active={active} />,
   },
   {
-    href: '/chat',
-    label: 'Chat IA',
-    icon: (active) => <IconChat active={active} />,
-  },
-  {
     href: '/sources',
     label: 'Sources RSS',
     icon: (active) => <IconSources active={active} />,
@@ -168,14 +163,6 @@ function IconArticles({ active }: { active: boolean }) {
     <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
       <rect x="2" y="2" width="14" height="14" rx="2" stroke="currentColor" strokeWidth={active ? 2 : 1.5}/>
       <path d="M5 6h8M5 9h8M5 12h5" stroke="currentColor" strokeWidth={active ? 2 : 1.5} strokeLinecap="round"/>
-    </svg>
-  )
-}
-
-function IconChat({ active }: { active: boolean }) {
-  return (
-    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-      <path d="M2 3a1 1 0 011-1h12a1 1 0 011 1v9a1 1 0 01-1 1H5l-3 3V3z" stroke="currentColor" strokeWidth={active ? 2 : 1.5} strokeLinejoin="round" fill={active ? 'currentColor' : 'none'} fillOpacity={active ? 0.1 : 0}/>
     </svg>
   )
 }

@@ -59,6 +59,14 @@ export const articleApi = {
     request<void>(`/api/articles/${id}`, { method: 'DELETE' }),
   regenerateImage: (id: string) =>
     request<{ image_url: string; wp_media_id: number }>(`/api/articles/${id}/regenerate-image`, { method: 'POST' }),
+  // Boucle "Améliorer et régénérer" — réécriture complète (nouvel angle,
+  // nouvelle image) à partir du contenu source d'origine. Appel LLM +
+  // génération d'image réels, peut prendre plusieurs dizaines de secondes.
+  regenerate: (id: string) =>
+    request<{ id: string; titre: string; chapeau: string; corps: string; image_url: string | null }>(
+      `/api/articles/${id}/regenerate`,
+      { method: 'POST' }
+    ),
 }
 
 // ── Cycles ───────────────────────────────────────────────────────────────────
@@ -79,30 +87,6 @@ export const providerApi = {
       body: JSON.stringify({ status }),
     }),
   reset: () => request('/api/providers/reset', { method: 'POST' }),
-}
-
-// ── Chat ──────────────────────────────────────────────────────────────────────
-export const chatApi = {
-  send: (messages: { role: string; content: string }[], opts?: { temperature?: number }) =>
-    request('/api/chat', { method: 'POST', body: JSON.stringify({ messages, ...opts }) }),
-  improve: (prompt: string) =>
-    request('/api/chat/improve', { method: 'POST', body: JSON.stringify({ prompt }) }),
-  streamUrl: (sessionId: string, message: string) =>
-    `${BASE}/api/chat/stream?session_id=${encodeURIComponent(sessionId)}&message=${encodeURIComponent(message)}`,
-  sessions: () => request<import('./types').ChatSession[]>('/api/chat/sessions'),
-  session: (id: string) =>
-    request<{ session: import('./types').ChatSession; messages: import('./types').ChatMessage[] }>(
-      `/api/chat/sessions/${id}`
-    ),
-  createSession: () =>
-    request<import('./types').ChatSession>('/api/chat/sessions', { method: 'POST' }),
-  updateSession: (id: string, data: Partial<Pick<import('./types').ChatSession, 'title' | 'is_pinned' | 'status'>>) =>
-    request<import('./types').ChatSession>(`/api/chat/sessions/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    }),
-  deleteSession: (id: string) =>
-    request<void>(`/api/chat/sessions/${id}`, { method: 'DELETE' }),
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────

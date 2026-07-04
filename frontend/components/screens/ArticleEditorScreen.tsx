@@ -39,7 +39,7 @@ export function ArticleEditorScreen({ id }: { id: string }) {
   const { mutate: reject } = useMutation(async () => {
     await articleApi.reject(id)
     show('Article rejeté', 'warning')
-    router.push('/articles')
+    router.push('/dashboard')
   })
 
   const { mutate: regenerateImage, loading: regeneratingImage } = useMutation(async () => {
@@ -47,6 +47,23 @@ export function ArticleEditorScreen({ id }: { id: string }) {
     await refetch()
     show('Image régénérée', 'success')
   })
+
+  // Boucle "Améliorer et régénérer" — réécrit intégralement l'article
+  // (nouvel angle, nouvelle image) à partir du contenu source d'origine.
+  // Répétable sans limite tant que l'article n'est pas approuvé : chaque
+  // clic déclenche un vrai appel LLM + génération d'image (coût réel accepté
+  // explicitement), refetch() met la page à jour en place sans navigation.
+  const { mutate: regenerate, loading: regenerating } = useMutation(async () => {
+    try {
+      await articleApi.regenerate(id)
+      await refetch()
+      show('Article régénéré — nouvel angle et nouvelle image', 'success')
+    } catch (e) {
+      show(e instanceof Error ? e.message : 'Échec de la régénération', 'error')
+    }
+  })
+
+  const anyActionInFlight = approving || regeneratingImage || regenerating
 
   if (loading) {
     return (
@@ -83,14 +100,25 @@ export function ArticleEditorScreen({ id }: { id: string }) {
             <Button
               variant="ghost"
               size="sm"
+              disabled={anyActionInFlight}
               onClick={() => setConfirmReject(true)}
             >
               Rejeter
             </Button>
             <Button
+              variant="outline"
+              size="sm"
+              loading={regenerating}
+              disabled={anyActionInFlight && !regenerating}
+              onClick={() => regenerate(undefined as unknown as void)}
+            >
+              ↻ Améliorer et régénérer
+            </Button>
+            <Button
               variant="primary"
               size="sm"
               loading={approving}
+              disabled={anyActionInFlight && !approving}
               onClick={() => approve(undefined as unknown as void)}
             >
               Approuver et publier
@@ -252,14 +280,26 @@ export function ArticleEditorScreen({ id }: { id: string }) {
                 size="lg"
                 className="w-full"
                 loading={approving}
+                disabled={anyActionInFlight && !approving}
                 onClick={() => approve(undefined as unknown as void)}
               >
                 ✓ Approuver et publier
               </Button>
               <Button
+                variant="outline"
+                size="md"
+                className="w-full"
+                loading={regenerating}
+                disabled={anyActionInFlight && !regenerating}
+                onClick={() => regenerate(undefined as unknown as void)}
+              >
+                ↻ Améliorer et régénérer
+              </Button>
+              <Button
                 variant="danger"
                 size="md"
                 className="w-full"
+                disabled={anyActionInFlight}
                 onClick={() => setConfirmReject(true)}
               >
                 Rejeter cet article

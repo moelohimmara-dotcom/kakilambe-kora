@@ -33,15 +33,6 @@ const items: BottomNavItem[] = [
     ),
   },
   {
-    href: '/chat',
-    label: 'Chat',
-    icon: (active) => (
-      <svg width="22" height="22" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-        <path d="M2 3a1 1 0 011-1h12a1 1 0 011 1v9a1 1 0 01-1 1H5l-3 3V3z" stroke="currentColor" strokeWidth={active ? 2 : 1.5} strokeLinejoin="round" fill={active ? 'currentColor' : 'none'} fillOpacity="0.1"/>
-      </svg>
-    ),
-  },
-  {
     href: '/agent',
     label: 'Agent',
     icon: (active) => (

@@ -2,7 +2,6 @@
 
 import { useState, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import Link from 'next/link'
 import { Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
@@ -74,7 +73,7 @@ export function ArticlesScreen() {
   })
 
   return (
-    <div className="p-6 md:p-8 max-w-5xl">
+    <div className="p-4 md:p-8 max-w-6xl">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -85,8 +84,12 @@ export function ArticlesScreen() {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 mb-6 bg-gray-pale rounded-lg p-1 w-fit flex-wrap" role="tablist" aria-label="Filtrer les articles">
+      {/* Tabs — scrollable horizontalement sur mobile plutôt que de wrapper */}
+      <div
+        className="flex gap-1 mb-6 bg-gray-pale rounded-lg p-1 w-full md:w-fit overflow-x-auto"
+        role="tablist"
+        aria-label="Filtrer les articles"
+      >
         {STATUS_TABS.map(tab => (
           <button
             key={tab.value}
@@ -96,7 +99,7 @@ export function ArticlesScreen() {
             aria-controls="articles-panel"
             onClick={() => setActiveStatus(tab.value)}
             className={
-              `px-4 py-1.5 rounded-md font-heading text-[12px] font-semibold transition-all ` +
+              `shrink-0 px-4 min-h-[44px] rounded-md font-heading text-[12px] font-semibold transition-all ` +
               `focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange ` +
               `${activeStatus === tab.value
                 ? 'bg-white text-anthracite shadow-sm'
@@ -109,14 +112,14 @@ export function ArticlesScreen() {
         ))}
       </div>
 
-      {/* Articles list */}
+      {/* Grille de cartes — 1 colonne mobile, 2 tablette, 3 desktop */}
       <div id="articles-panel" role="tabpanel" aria-labelledby={`tab-${activeStatus || 'all'}`}>
       {loading ? (
         <div className="flex justify-center py-16"><Spinner size="lg" /></div>
       ) : articles.length === 0 ? (
         <EmptyState status={activeStatus} />
       ) : (
-        <div className="space-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
           {articles.map(article => (
             <div
               key={article.id}
@@ -124,6 +127,7 @@ export function ArticlesScreen() {
             >
               <ArticleCard
                 article={article}
+                onOpen={() => router.push(`/articles/${article.id}`)}
                 onApprove={() => approve(article.id)}
                 onReject={() => reject(article.id)}
                 onDelete={() => setDeleteTarget(article.id)}
@@ -146,117 +150,110 @@ export function ArticlesScreen() {
 }
 
 // ── Article Card ─────────────────────────────────────────────────────────────
+// Carte verticale pleinement cliquable (ouvre la page de consultation au clic
+// n'importe où sur la carte) — les boutons d'action internes stoppent la
+// propagation pour ne pas déclencher l'ouverture en même temps.
 
 function ArticleCard({
-  article, onApprove, onReject, onDelete, approving,
+  article, onOpen, onApprove, onReject, onDelete, approving,
 }: {
   article: Article
+  onOpen: () => void
   onApprove: () => void
   onReject: () => void
   onDelete: () => void
   approving: boolean
 }) {
+  function stop<T>(fn: () => T) {
+    return (e: React.MouseEvent) => { e.stopPropagation(); fn() }
+  }
+
   return (
-    <Card className="flex gap-4">
-      {/* Thumbnail */}
-      <div className="shrink-0">
+    <Card
+      padding="sm"
+      onClick={onOpen}
+      className="flex flex-col cursor-pointer hover:shadow-md transition-shadow overflow-hidden h-full"
+    >
+      {/* Miniature — marge négative pour "bleeder" jusqu'aux bords malgré le
+          padding par défaut de Card (éviter un conflit d'utilitaires p-0/p-5
+          dont l'ordre de cascade Tailwind n'est pas garanti sur un même
+          élément). */}
+      <div className="-mx-4 -mt-4 mb-4 aspect-[16/9] w-[calc(100%+2rem)] shrink-0 bg-gray-pale">
         {article.image_url ? (
           <img
             src={article.image_url}
             alt=""
-            className="w-20 h-20 rounded-md object-cover bg-gray-pale"
+            className="w-full h-full object-cover"
           />
         ) : (
-          <div className="w-20 h-20 rounded-md bg-orange/10 flex items-center justify-center">
-            <span className="font-heading font-bold text-2xl text-orange">/</span>
+          <div className="w-full h-full flex items-center justify-center bg-orange/10">
+            <span className="font-heading font-bold text-3xl text-orange">/</span>
           </div>
         )}
       </div>
 
-      {/* Content */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-start justify-between gap-3 mb-1">
-          <Link
-            href={`/articles/${article.id}`}
-            className="font-heading font-semibold text-[14px] text-anthracite hover:text-orange transition-colors line-clamp-2 flex-1"
-          >
+      <div className="flex flex-col flex-1">
+        <div className="flex items-start justify-between gap-2 mb-1.5">
+          <h3 className="font-heading font-semibold text-[14px] text-anthracite line-clamp-2 flex-1">
             {article.titre}
-          </Link>
-          <Badge variant={statusVariant(article.status)} className="shrink-0 mt-0.5">
+          </h3>
+          <Badge variant={statusVariant(article.status)} className="shrink-0">
             {statusLabel(article.status)}
           </Badge>
         </div>
 
         {article.chapeau && (
-          <p className="font-body text-[13px] text-gray-dk line-clamp-2 mb-2">
+          <p className="font-body text-[13px] text-gray-dk line-clamp-2 mb-3">
             {article.chapeau}
           </p>
         )}
 
-        <div className="flex items-center gap-4 flex-wrap">
-          <span className="font-heading text-[11px] text-gray-med">
-            {article.source_nom ?? '—'} · {formatRelative(article.created_at)}
-          </span>
-          {article.word_count && (
-            <span className="font-heading text-[11px] text-gray-med">
-              {article.word_count} mots
-            </span>
-          )}
-          {article.mots_cles && article.mots_cles.length > 0 && (
-            <div className="flex gap-1 flex-wrap">
-              {article.mots_cles.slice(0, 3).map(k => (
-                <span key={k} className="font-heading text-[10px] bg-gray-pale text-gray-dk px-2 py-0.5 rounded-full">
-                  {k}
-                </span>
-              ))}
+        <span className="font-heading text-[11px] text-gray-med mb-3">
+          {article.source_nom ?? '—'} · {formatRelative(article.created_at)}
+        </span>
+
+        <div className="mt-auto flex items-center justify-between gap-2 pt-2 border-t border-gray-pale">
+          {article.status === 'PENDING_REVIEW' ? (
+            <div className="flex gap-2">
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={stop(onApprove)}
+                loading={approving}
+                aria-label={`Approuver : ${article.titre}`}
+              >
+                Approuver
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={stop(onReject)}
+                aria-label={`Rejeter : ${article.titre}`}
+              >
+                Rejeter
+              </Button>
             </div>
-          )}
-        </div>
-      </div>
+          ) : article.status === 'PUBLISHED' && article.wp_url ? (
+            <a
+              href={article.wp_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="font-heading text-[12px] text-blue-txt hover:underline min-h-[44px] flex items-center"
+            >
+              Voir sur WP ↗
+            </a>
+          ) : <span />}
 
-      {/* Actions (PENDING_REVIEW seulement) */}
-      {article.status === 'PENDING_REVIEW' && (
-        <div className="shrink-0 flex flex-col gap-2 self-start">
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={onApprove}
-            loading={approving}
-            aria-label={`Approuver : ${article.titre}`}
+          <button
+            onClick={stop(onDelete)}
+            title="Supprimer"
+            className="w-11 h-11 flex items-center justify-center text-gray-med hover:text-danger transition-colors rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger shrink-0"
+            aria-label={`Supprimer : ${article.titre}`}
           >
-            Approuver
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onReject}
-            aria-label={`Rejeter : ${article.titre}`}
-          >
-            Rejeter
-          </Button>
+            <Trash2 size={18} aria-hidden="true" />
+          </button>
         </div>
-      )}
-
-      {/* Lien WP + Supprimer */}
-      <div className="shrink-0 self-start flex flex-col items-end gap-2">
-        {article.status === 'PUBLISHED' && article.wp_url && (
-          <a
-            href={article.wp_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-heading text-[12px] text-blue-txt hover:underline flex items-center gap-1"
-          >
-            Voir sur WP ↗
-          </a>
-        )}
-        <button
-          onClick={onDelete}
-          title="Supprimer"
-          className="p-1.5 text-gray-med hover:text-danger transition-colors rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger"
-          aria-label={`Supprimer : ${article.titre}`}
-        >
-          <Trash2 size={18} aria-hidden="true" />
-        </button>
       </div>
     </Card>
   )
