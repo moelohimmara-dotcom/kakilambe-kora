@@ -30,7 +30,10 @@ const PENDING_ARTICLE_RESOLUTION_TIMEOUT_MS = 15000
 
 export function AgentScreen() {
   const router = useRouter()
-  const [mode, setMode] = useState<'semi' | 'auto'>('semi')
+  // Verrouillé en semi-automatique — spécification explicite : la validation
+  // humaine (HITL) avant publication n'est plus contournable depuis l'IHM,
+  // aucun état ni interrupteur ne permet de basculer en mode auto ici.
+  const mode = 'semi' as const
   const [currentCycleId, setCurrentCycleId] = useState<string | null>(null)
   const { show } = useToast()
   // Garde anti-double-clic : `loading` du hook useMutation ne se répercute
@@ -242,11 +245,17 @@ export function AgentScreen() {
   // travail actif de CETTE session (lancement en cours ou cycle RUNNING) —
   // jamais un cycle PAUSED ambiant découvert passivement en arrivant sur la
   // page, qui n'est plus qu'une information passive (bannière ci-dessous).
+  // isBusy gate aussi le bouton "Lancer le cycle" — corrigé après clarification
+  // explicite : un cycle PAUSED (article en attente de validation) ne doit
+  // JAMAIS bloquer le lancement d'un nouveau cycle indépendant. La production
+  // réelle fait déjà tourner plusieurs cycles en parallèle (plusieurs articles
+  // "en attente" simultanés observés), le backend le supporte nativement
+  // (chaque cycle a son propre cycle_id / thread_id LangGraph, aucun état
+  // partagé entre eux) — seul un verrou UI-only avait été ajouté par erreur
+  // ici lors d'une itération précédente, sans base réelle. Seul un cycle
+  // RUNNING dans CETTE session (isBusy) bloque un nouveau lancement, pour
+  // éviter un double appel concurrent depuis le même onglet.
   const isBusy = running || isRunning
-  // Distinct de isBusy : bloque le lancement d'un nouveau cycle tant qu'un
-  // autre (RUNNING ou PAUSED, y compris ambiant) est déjà actif, sans pour
-  // autant déclencher l'overlay plein écran pour ce dernier cas.
-  const isCycleActive = isBusy || isPaused
 
   return (
     <div className="p-6 md:p-8 max-w-4xl">
@@ -266,10 +275,11 @@ export function AgentScreen() {
           </h2>
           <div className="space-y-4">
             <Toggle
-              checked={mode === 'semi'}
-              onChange={v => setMode(v ? 'semi' : 'auto')}
+              checked={true}
+              onChange={() => {}}
+              disabled
               label="Mode semi-automatique"
-              description="Pause avant chaque publication pour validation manuelle"
+              description="Verrouillé — validation humaine obligatoire avant toute publication"
             />
 
             <div className="flex items-center gap-3">
@@ -277,16 +287,28 @@ export function AgentScreen() {
                 variant="primary"
                 size="md"
                 loading={running}
-                disabled={isCycleActive}
+                disabled={isBusy}
                 onClick={() => runCycle(undefined as unknown as void)}
                 className="flex-1"
               >
-                {isCycleActive ? 'Cycle en cours…' : 'Lancer le cycle'}
+                {isBusy ? 'Cycle en cours…' : 'Lancer le cycle'}
               </Button>
-              {mode === 'semi' && !running && !isCycleActive && (
+              {!running && !isBusy && (
                 <Badge variant="orange">HITL</Badge>
               )}
             </div>
+
+            {isBusy && (
+              <Button
+                variant="ghost"
+                size="sm"
+                loading={cancelling}
+                onClick={() => cancelCycle(undefined as unknown as void)}
+                className="w-full"
+              >
+                ⏹ Annuler le cycle
+              </Button>
+            )}
           </div>
         </Card>
 
