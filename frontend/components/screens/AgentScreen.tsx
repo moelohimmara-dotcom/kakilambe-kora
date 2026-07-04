@@ -144,13 +144,39 @@ export function AgentScreen() {
     // Cas limite : PAUSED confirmé mais aucun article résolu après un délai
     // raisonnable (ex. redémarrage backend pile à ce moment) — on informe
     // plutôt que de laisser un état incohérent silencieux.
-    if (!pendingArticle && Date.now() - (pendingSinceRef.current ?? Date.now()) > PENDING_ARTICLE_RESOLUTION_TIMEOUT_MS) {
-      show("Article prêt mais introuvable automatiquement — consulte l'onglet Articles.", 'warning')
-      localStorage.removeItem(CYCLE_ID_STORAGE_KEY)
-      setCurrentCycleId(null)
+    //
+    // Bug corrigé : cette vérification se basait sur `cycle` (polling en
+    // arrière-plan via setInterval), qui reste figé à sa dernière valeur
+    // reçue tant qu'un onglet est en arrière-plan (les navigateurs throttlent
+    // les timers des onglets inactifs) ou si une requête de polling échoue
+    // silencieusement (useAsync ne réinitialise pas `data` sur erreur). Un
+    // utilisateur revenant sur un onglet resté longtemps en arrière-plan
+    // pouvait ainsi déclencher ce toast sur la base d'un statut PAUSED
+    // obsolète alors que le cycle était réellement terminé depuis longtemps.
+    // On revérifie donc l'état réel côté serveur juste avant d'agir, plutôt
+    // que de faire confiance à la valeur potentiellement périmée du polling.
+    const elapsed = Date.now() - (pendingSinceRef.current ?? Date.now())
+    if (!pendingArticle && elapsed > PENDING_ARTICLE_RESOLUTION_TIMEOUT_MS) {
+      const idToVerify = cycle?.cycle_id ?? currentCycleId ?? undefined
+      agentApi.status(idToVerify).then((fresh) => {
+        const freshStatus = (fresh as unknown as CycleState)?.status
+        if (freshStatus === 'PAUSED') {
+          show("Article prêt mais introuvable automatiquement — consulte l'onglet Articles.", 'warning')
+        }
+        // Sinon (COMPLETED/FAILED/CANCELLED) : le cycle s'est déjà résolu,
+        // le polling normal va rattraper l'état réel — aucun toast à tort.
+        localStorage.removeItem(CYCLE_ID_STORAGE_KEY)
+        setCurrentCycleId(null)
+        refetchStatus()
+      }).catch(() => {
+        // Vérification impossible (réseau) : ne pas affirmer un problème
+        // qu'on n'a pas pu confirmer.
+        localStorage.removeItem(CYCLE_ID_STORAGE_KEY)
+        setCurrentCycleId(null)
+      })
       pendingSinceRef.current = null
     }
-  }, [isPaused, pendingArticle, show])
+  }, [isPaused, pendingArticle, show, cycle?.cycle_id, currentCycleId, refetchStatus])
 
   useEffect(() => {
     if (isFailed) {
