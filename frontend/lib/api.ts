@@ -8,8 +8,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   })
   if (!res.ok) {
-    const detail = await res.text()
-    throw new Error(`API ${res.status}: ${detail}`)
+    const raw = await res.text()
+    // FastAPI renvoie {"detail": "message lisible"} — sans ce parsing,
+    // error.message contenait le JSON brut (`API 409: {"detail":"..."}`),
+    // qu'un composant affichant e.message directement (courant dans l'appli)
+    // renverrait tel quel à l'utilisateur — texte technique brut interdit
+    // dans le groupe (editorial) par la règle transverse 0.3.4.
+    let detail = raw
+    try {
+      const parsed = JSON.parse(raw) as { detail?: unknown }
+      if (typeof parsed.detail === 'string') detail = parsed.detail
+    } catch {
+      // Réponse non-JSON (ex. erreur de proxy brute) — garder le texte tel quel.
+    }
+    throw new Error(detail)
   }
   return res.json() as Promise<T>
 }
@@ -76,6 +88,12 @@ export const cycleApi = {
       `/api/cycles?page=${page}`
     ),
   get: (id: string) => request<import('./types').Cycle>(`/api/cycles/${id}`),
+  // Agrégats réels sur TOUS les cycles (pas seulement la page 1 de list()) —
+  // voir backend/api/cycle_routes.py:22 pour l'écart que ça corrige.
+  stats: () =>
+    request<{ total_cycles: number; total_published: number; total_failed: number; success_rate: number }>(
+      '/api/cycles/stats'
+    ),
 }
 
 // ── Providers ─────────────────────────────────────────────────────────────────

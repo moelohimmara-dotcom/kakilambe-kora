@@ -31,11 +31,19 @@ export function SourcesScreen() {
       setFormError('URL invalide')
       return
     }
-    await settingsApi.createSource({
-      name: newSource.name,
-      url: newSource.url,
-      category: newSource.category || undefined,
-    })
+    try {
+      await settingsApi.createSource({
+        name: newSource.name,
+        url: newSource.url,
+        category: newSource.category || undefined,
+      })
+    } catch (e) {
+      // Doublon détecté par la contrainte UNIQUE(url) ajoutée en migration
+      // 008 (CDC §7.4.2, aucune vérification n'existait avant) — message
+      // clair via request()'s parsing du detail FastAPI, jamais de JSON brut.
+      setFormError(e instanceof Error ? e.message : "Échec de l'ajout de la source")
+      return
+    }
     setNewSource({ name: '', url: '', category: '' })
     setFormError('')
     setShowAdd(false)

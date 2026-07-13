@@ -56,6 +56,40 @@ async def list_cycles(page: int = 1, limit: int = 20, status: Optional[str] = No
     return {"items": [jsonable_encoder(dict(r)) for r in rows], "total": total, "page": page}
 
 
+@router.get("/stats")
+async def cycles_stats():
+    """
+    Agrégats réels sur TOUS les cycles en base — /history calculait ces
+    totaux (publiés/échoués/taux de succès) uniquement à partir des 20
+    cycles les plus récents renvoyés par GET /api/cycles (page 1), ce qui
+    les faisait diverger du total réel dès qu'il existait plus de 20 cycles.
+    Doit rester déclaré AVANT /{cycle_id} pour ne pas être capturé comme un
+    id de cycle par cette route générique.
+    """
+    async with get_db() as db:
+        result = await db.execute(
+            text("""
+                SELECT
+                    COUNT(*) AS total_cycles,
+                    COALESCE(SUM(articles_published), 0) AS total_published,
+                    COUNT(*) FILTER (WHERE status = 'FAILED') AS total_failed,
+                    COUNT(*) FILTER (WHERE status = 'COMPLETED') AS total_completed
+                FROM cycles
+            """)
+        )
+        row = result.mappings().first()
+
+    total_cycles = row["total_cycles"] or 0
+    success_rate = round((row["total_completed"] / total_cycles) * 100, 1) if total_cycles else 0
+
+    return {
+        "total_cycles": total_cycles,
+        "total_published": int(row["total_published"]),
+        "total_failed": int(row["total_failed"]),
+        "success_rate": success_rate,
+    }
+
+
 @router.get("/{cycle_id}")
 async def get_cycle(cycle_id: str):
     async with get_db() as db:

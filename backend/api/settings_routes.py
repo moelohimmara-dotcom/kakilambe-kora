@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from typing import Optional
 
 from db.connection import get_db
@@ -206,15 +207,22 @@ async def list_sources():
 
 @router.post("/sources")
 async def create_source(body: SourceCreate):
-    async with get_db() as db:
-        result = await db.execute(
-            text("""
-                INSERT INTO rss_sources (name, url, category, source_level)
-                VALUES (:name, :url, :cat, :level) RETURNING id
-            """),
-            {"name": body.name, "url": body.url, "cat": body.category, "level": body.source_level},
-        )
-        source_id = result.scalar()
+    # Audité (CDC §7.4.2) : aucune vérification de doublon n'existait ni
+    # côté front ni côté backend — la contrainte UNIQUE(url) ajoutée en
+    # migration 008 fait maintenant échouer l'INSERT proprement plutôt que
+    # de laisser deux sources identiques scraper la même URL en double.
+    try:
+        async with get_db() as db:
+            result = await db.execute(
+                text("""
+                    INSERT INTO rss_sources (name, url, category, source_level)
+                    VALUES (:name, :url, :cat, :level) RETURNING id
+                """),
+                {"name": body.name, "url": body.url, "cat": body.category, "level": body.source_level},
+            )
+            source_id = result.scalar()
+    except IntegrityError:
+        raise HTTPException(status_code=409, detail="Cette URL RSS est déjà configurée")
     return {"id": str(source_id), "created": True}
 
 
@@ -225,8 +233,11 @@ async def update_source(source_id: str, body: SourcePatch):
         raise HTTPException(status_code=400, detail="No fields to update")
     set_clause = ", ".join(f"{k} = :{k}" for k in fields)
     fields["id"] = source_id
-    async with get_db() as db:
-        await db.execute(text(f"UPDATE rss_sources SET {set_clause} WHERE id = :id"), fields)
+    try:
+        async with get_db() as db:
+            await db.execute(text(f"UPDATE rss_sources SET {set_clause} WHERE id = :id"), fields)
+    except IntegrityError:
+        raise HTTPException(status_code=409, detail="Cette URL RSS est déjà configurée")
     return {"updated": True}
 
 

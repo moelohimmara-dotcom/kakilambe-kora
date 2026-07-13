@@ -34,12 +34,15 @@ export function HistoryScreen() {
   const fetchStreak = useCallback(() => gamificationApi.getStreak(), [])
   const { data: streak } = useAsync(fetchStreak)
 
-  // KPI agregés
-  const totalPublished = cycles.reduce((s, c) => s + (c.articles_published ?? 0), 0)
-  const totalFailed    = cycles.filter(c => c.status === 'FAILED').length
-  const successRate    = cycles.length > 0
-    ? Math.round((cycles.filter(c => c.status === 'COMPLETED').length / cycles.length) * 100)
-    : 0
+  // KPI agrégés — totaux réels sur TOUS les cycles (GET /api/cycles/stats),
+  // pas seulement les 20 plus récents renvoyés par la page 1 de la liste
+  // ci-dessus (écart documenté puis corrigé, voir cycle_routes.py:22).
+  const fetchStats = useCallback(() => cycleApi.stats(), [])
+  const { data: stats } = useAsync(fetchStats)
+  const totalPublished = stats?.total_published ?? 0
+  const totalFailed    = stats?.total_failed ?? 0
+  const successRate    = stats?.success_rate ?? 0
+  const totalCyclesReal = stats?.total_cycles ?? cycles.length
 
   return (
     <div className="p-6 md:p-8 max-w-4xl">
@@ -48,7 +51,7 @@ export function HistoryScreen() {
         <div>
           <h1 className="font-heading font-bold text-2xl text-anthracite">Historique</h1>
           <p className="font-heading text-[13px] text-gray-dk mt-0.5">
-            {loading ? '…' : `${cycles.length} cycle${cycles.length !== 1 ? 's' : ''} au total`}
+            {loading ? '…' : `${totalCyclesReal} cycle${totalCyclesReal !== 1 ? 's' : ''} au total`}
           </p>
         </div>
         {streak && streak.days > 0 && <StreakIndicator days={streak.days} />}
