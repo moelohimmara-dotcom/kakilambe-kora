@@ -11,6 +11,7 @@ const navItems = [
   { href: '/articles',  label: 'Articles' },
   { href: '/sources',   label: 'Sources RSS' },
   { href: '/history',   label: 'Historique' },
+  { href: '/corbeille', label: 'Corbeille' },
   { href: '/agent',     label: 'Agent KORA' },
   { href: '/settings',  label: 'Paramètres' },
 ]

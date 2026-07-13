@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
+import { GamificationBar } from '@/components/ui/GamificationBar'
 import { useAsync, useInterval } from '@/lib/hooks'
 import { articleApi, agentApi } from '@/lib/api'
 import { formatRelative, statusLabel, statusVariant } from '@/lib/utils'
@@ -66,9 +67,12 @@ export function DashboardScreen() {
           <h1 className="font-heading font-bold text-2xl text-anthracite">Tableau de bord</h1>
           <p className="font-heading text-[13px] text-gray-dk mt-0.5">GuinéePress Intelligence · kakilambe.com</p>
         </div>
-        <Button href="/agent" variant="primary" size="sm">
-          Lancer un cycle
-        </Button>
+        <div className="flex items-center gap-3">
+          <GamificationBar />
+          <Button href="/agent" variant="primary" size="sm">
+            Lancer un cycle
+          </Button>
+        </div>
       </div>
 
       {/* KPI grid */}

@@ -21,6 +21,11 @@ module.exports = {
         sage:         '#788c5d',
         danger:       '#c0392b',
         warning:      '#e67e22',
+        // Réservé aux composants de gamification (StreakIndicator,
+        // AchievementToast, ProgressRing) — jamais réutilisé ailleurs dans
+        // l'IHM éditoriale (le badge HITL de /agent reste "orange").
+        lavender:       '#a996c9',
+        'lavender-pale': '#f1ecf8',
       },
       fontFamily: {
         heading: ['Poppins', 'Arial', 'sans-serif'],

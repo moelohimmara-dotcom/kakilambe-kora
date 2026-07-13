@@ -7,6 +7,7 @@ const icons: Record<ToastVariant, string> = {
   success: '✓',
   error:   '✕',
   warning: '!',
+  achievement: '🏆',
 }
 
 const variantCls: Record<ToastVariant, string> = {
@@ -14,6 +15,10 @@ const variantCls: Record<ToastVariant, string> = {
   success: 'bg-sage text-white',
   error:   'bg-danger text-white',
   warning: 'bg-warning text-white',
+  // Gamification — ton pastel discret, bordure pointillée, distinct des
+  // variantes fonctionnelles solides ci-dessus. Accent lavande réservé à la
+  // gamification, jamais réutilisé ailleurs.
+  achievement: 'bg-lavender-pale text-anthracite border border-dashed border-lavender',
 }
 
 export function ToastContainer() {

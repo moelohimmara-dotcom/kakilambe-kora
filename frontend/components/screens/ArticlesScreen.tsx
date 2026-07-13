@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Trash2 } from 'lucide-react'
+import { Trash2, Archive } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -11,6 +11,8 @@ import { ConfirmDeleteModal } from '@/components/ui/ConfirmDeleteModal'
 import { useAsync, useMutation } from '@/lib/hooks'
 import { useToast } from '@/lib/contexts/ToastContext'
 import { articleApi } from '@/lib/api'
+import { trashApi } from '@/lib/trashApi'
+import { gamificationApi } from '@/lib/gamificationApi'
 import { formatRelative, statusLabel, statusVariant } from '@/lib/utils'
 import type { Article, ArticleStatus } from '@/lib/types'
 
@@ -33,14 +35,27 @@ export function ArticlesScreen() {
   )
   const [evaporating, setEvaporating] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [navigatingId, setNavigatingId] = useState<string | null>(null)
+  // Suivi local des articles envoyés à la corbeille (nouveau périmètre
+  // produit) — le backend n'a aucune notion d'archivage (voir lib/trashApi.ts),
+  // donc ce filtrage se fait entièrement côté front à partir du store local.
+  const [archivedIds, setArchivedIds] = useState<Set<string>>(() => trashApi.archivedIds())
   const { show } = useToast()
+
+  // Transition de sortie (fade + léger scale, CSS natif) avant navigation
+  // vers la page de détail — évite le saut brutal signalé dans le CDC (5.4.1),
+  // sans dépendance supplémentaire.
+  function openArticle(id: string) {
+    setNavigatingId(id)
+    setTimeout(() => router.push(`/articles/${id}`), 200)
+  }
 
   const fetchArticles = useCallback(
     () => articleApi.list(activeStatus || undefined),
     [activeStatus]
   )
   const { data, loading, refetch } = useAsync(fetchArticles, [activeStatus])
-  const articles = (data as { items: Article[] } | null)?.items ?? []
+  const articles = ((data as { items: Article[] } | null)?.items ?? []).filter(a => !archivedIds.has(a.id))
 
   const { mutate: approve, loading: approving } = useMutation(async (id: string) => {
     setEvaporating(id)
@@ -49,6 +64,8 @@ export function ArticlesScreen() {
     await refetch()
     setEvaporating(null)
     show('Article approuvé et publié sur WordPress', 'success')
+    const milestone = await gamificationApi.checkNewMilestone().catch(() => null)
+    if (milestone) show(milestone.label, 'achievement')
     return result
   })
 
@@ -59,6 +76,15 @@ export function ArticlesScreen() {
     await refetch()
     setEvaporating(null)
     show('Article rejeté', 'warning')
+  })
+
+  const { mutate: archive } = useMutation(async (article: Article) => {
+    setEvaporating(article.id)
+    await new Promise(r => setTimeout(r, 480))
+    await trashApi.archiveArticle(article)
+    setArchivedIds(trashApi.archivedIds())
+    setEvaporating(null)
+    show('Article envoyé à la corbeille — restaurable pendant 72h', 'warning')
   })
 
   const { mutate: deleteArticle, loading: deleting } = useMutation(async (id: string) => {
@@ -123,13 +149,20 @@ export function ArticlesScreen() {
           {articles.map(article => (
             <div
               key={article.id}
-              className={evaporating === article.id ? 'article-evaporate' : ''}
+              className={
+                evaporating === article.id
+                  ? 'article-evaporate'
+                  : navigatingId === article.id
+                  ? 'opacity-0 scale-[0.98] transition-all duration-200'
+                  : ''
+              }
             >
               <ArticleCard
                 article={article}
-                onOpen={() => router.push(`/articles/${article.id}`)}
+                onOpen={() => openArticle(article.id)}
                 onApprove={() => approve(article.id)}
                 onReject={() => reject(article.id)}
+                onArchive={() => archive(article)}
                 onDelete={() => setDeleteTarget(article.id)}
                 approving={approving && evaporating === article.id}
               />
@@ -155,12 +188,13 @@ export function ArticlesScreen() {
 // propagation pour ne pas déclencher l'ouverture en même temps.
 
 function ArticleCard({
-  article, onOpen, onApprove, onReject, onDelete, approving,
+  article, onOpen, onApprove, onReject, onArchive, onDelete, approving,
 }: {
   article: Article
   onOpen: () => void
   onApprove: () => void
   onReject: () => void
+  onArchive: () => void
   onDelete: () => void
   approving: boolean
 }) {
@@ -172,7 +206,7 @@ function ArticleCard({
     <Card
       padding="sm"
       onClick={onOpen}
-      className="flex flex-col cursor-pointer hover:shadow-md transition-shadow overflow-hidden h-full"
+      className="flex flex-col cursor-pointer hover:shadow-md hover:scale-[1.01] transition-all duration-200 overflow-hidden h-full"
     >
       {/* Miniature — marge négative pour "bleeder" jusqu'aux bords malgré le
           padding par défaut de Card (éviter un conflit d'utilitaires p-0/p-5
@@ -245,14 +279,24 @@ function ArticleCard({
             </a>
           ) : <span />}
 
-          <button
-            onClick={stop(onDelete)}
-            title="Supprimer"
-            className="w-11 h-11 flex items-center justify-center text-gray-med hover:text-danger transition-colors rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger shrink-0"
-            aria-label={`Supprimer : ${article.titre}`}
-          >
-            <Trash2 size={18} aria-hidden="true" />
-          </button>
+          <div className="flex items-center shrink-0">
+            <button
+              onClick={stop(onArchive)}
+              title="Archiver"
+              className="w-11 h-11 flex items-center justify-center text-gray-med hover:text-anthracite transition-colors rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange"
+              aria-label={`Archiver : ${article.titre}`}
+            >
+              <Archive size={18} aria-hidden="true" />
+            </button>
+            <button
+              onClick={stop(onDelete)}
+              title="Supprimer"
+              className="w-11 h-11 flex items-center justify-center text-gray-med hover:text-danger transition-colors rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger"
+              aria-label={`Supprimer : ${article.titre}`}
+            >
+              <Trash2 size={18} aria-hidden="true" />
+            </button>
+          </div>
         </div>
       </div>
     </Card>

@@ -3,14 +3,20 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import ReactMarkdown from 'react-markdown'
+import { Archive, Pencil, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Spinner } from '@/components/ui/Spinner'
 import { Modal } from '@/components/ui/Modal'
+import { ConfirmDeleteModal } from '@/components/ui/ConfirmDeleteModal'
+import { ManualEditOverlay, ManualEditFields } from '@/components/ui/ManualEditOverlay'
 import { useAsync, useMutation } from '@/lib/hooks'
 import { useToast } from '@/lib/contexts/ToastContext'
 import { articleApi } from '@/lib/api'
+import { regenerationApi, RegenVersions } from '@/lib/regenerationApi'
+import { trashApi } from '@/lib/trashApi'
+import { gamificationApi } from '@/lib/gamificationApi'
 import { formatDate, statusLabel, statusVariant, wordCount } from '@/lib/utils'
 import type { Article } from '@/lib/types'
 
@@ -19,6 +25,9 @@ export function ArticleEditorScreen({ id }: { id: string }) {
   const { show } = useToast()
   const [evaporating, setEvaporating] = useState(false)
   const [confirmReject, setConfirmReject] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [manualEditOpen, setManualEditOpen] = useState(false)
+  const [versions, setVersions] = useState<RegenVersions>(() => regenerationApi.getVersions(id))
 
   const fetchArticle = useCallback(() => articleApi.get(id), [id])
   const { data: article, loading, error, refetch } = useAsync<Article>(fetchArticle)
@@ -33,37 +42,70 @@ export function ArticleEditorScreen({ id }: { id: string }) {
     await new Promise(r => setTimeout(r, 480))
     await articleApi.approve(id)
     show('Article approuvé — publication en cours sur WordPress', 'success')
+    const milestone = await gamificationApi.checkNewMilestone().catch(() => null)
+    if (milestone) show(milestone.label, 'achievement')
     router.push('/articles')
   })
 
-  const { mutate: reject } = useMutation(async () => {
+  const { mutate: reject, loading: rejecting } = useMutation(async () => {
     await articleApi.reject(id)
     show('Article rejeté', 'warning')
     router.push('/dashboard')
   })
 
-  const { mutate: regenerateImage, loading: regeneratingImage } = useMutation(async () => {
-    await articleApi.regenerateImage(id)
-    await refetch()
-    show('Image régénérée', 'success')
-  })
-
-  // Boucle "Améliorer et régénérer" — réécrit intégralement l'article
-  // (nouvel angle, nouvelle image) à partir du contenu source d'origine.
-  // Répétable sans limite tant que l'article n'est pas approuvé : chaque
-  // clic déclenche un vrai appel LLM + génération d'image (coût réel accepté
-  // explicitement), refetch() met la page à jour en place sans navigation.
-  const { mutate: regenerate, loading: regenerating } = useMutation(async () => {
+  // Régénération scindée (nouveau périmètre produit) — deux boutons
+  // indépendants, chacun avec son propre compteur de version local
+  // (regenerationApi, localStorage tant qu'aucune colonne de version
+  // n'existe côté backend). "Visuel" enveloppe l'endpoint réel déjà isolé à
+  // l'image ; "Texte" appelle le vrai endpoint /regenerate existant (celui
+  // testé par test_regenerate_live.py) — voir le commentaire dans
+  // lib/regenerationApi.ts pour la limitation honnête (il réécrit aussi
+  // l'image côté backend, faute d'endpoint texte-seul isolé).
+  const { mutate: regenerateVisual, loading: regeneratingVisual } = useMutation(async () => {
     try {
-      await articleApi.regenerate(id)
+      const result = await regenerationApi.regenerateVisual(id)
+      setVersions(v => ({ ...v, visual: result.version }))
       await refetch()
-      show('Article régénéré — nouvel angle et nouvelle image', 'success')
+      show('Visuel régénéré', 'success')
     } catch (e) {
-      show(e instanceof Error ? e.message : 'Échec de la régénération', 'error')
+      show(e instanceof Error ? e.message : 'Échec de la régénération du visuel', 'error')
     }
   })
 
-  const anyActionInFlight = approving || regeneratingImage || regenerating
+  const { mutate: regenerateText, loading: regeneratingText } = useMutation(async () => {
+    try {
+      const result = await regenerationApi.regenerateText(id)
+      setVersions(v => ({ ...v, text: result.version }))
+      await refetch()
+      show('Texte régénéré — nouvel angle (le visuel est aussi rafraîchi tant que le backend ne les isole pas)', 'success')
+    } catch (e) {
+      show(e instanceof Error ? e.message : 'Échec de la régénération du texte', 'error')
+    }
+  })
+
+  const { mutate: archiveArticle, loading: archiving } = useMutation(async () => {
+    if (!article) return
+    await trashApi.archiveArticle(article)
+    show('Article envoyé à la corbeille — restaurable pendant 72h', 'warning')
+    router.push('/articles')
+  })
+
+  const { mutate: deleteArticle, loading: deleting } = useMutation(async () => {
+    await articleApi.delete(id)
+    setConfirmDelete(false)
+    show('Article supprimé définitivement', 'warning')
+    router.push('/articles')
+  })
+
+  const { mutate: saveManualEdit, loading: savingManualEdit } = useMutation(async (fields: ManualEditFields) => {
+    await articleApi.patch(id, { ...fields })
+    await refetch()
+    setManualEditOpen(false)
+    show('Modifications enregistrées', 'success')
+  })
+
+  const anyActionInFlight =
+    approving || regeneratingVisual || regeneratingText || rejecting || archiving || deleting || savingManualEdit
 
   if (loading) {
     return (
@@ -95,12 +137,27 @@ export function ArticleEditorScreen({ id }: { id: string }) {
         <Badge variant={statusVariant(article.status)}>
           {statusLabel(article.status)}
         </Badge>
+
+        {/* Icônes Éditer/Archiver/Supprimer — cohérentes avec /articles */}
+        <div className="flex items-center gap-1">
+          <IconAction title="Édition manuelle" disabled={anyActionInFlight} onClick={() => setManualEditOpen(true)}>
+            <Pencil size={16} aria-hidden="true" />
+          </IconAction>
+          <IconAction title="Archiver" disabled={anyActionInFlight} loading={archiving} onClick={() => archiveArticle(undefined as unknown as void)}>
+            <Archive size={16} aria-hidden="true" />
+          </IconAction>
+          <IconAction title="Supprimer définitivement" disabled={anyActionInFlight} onClick={() => setConfirmDelete(true)} danger>
+            <Trash2 size={16} aria-hidden="true" />
+          </IconAction>
+        </div>
+
         {article.status === 'PENDING_REVIEW' && (
           <>
             <Button
               variant="ghost"
               size="sm"
-              disabled={anyActionInFlight}
+              loading={rejecting}
+              disabled={anyActionInFlight && !rejecting}
               onClick={() => setConfirmReject(true)}
             >
               Rejeter
@@ -108,11 +165,20 @@ export function ArticleEditorScreen({ id }: { id: string }) {
             <Button
               variant="outline"
               size="sm"
-              loading={regenerating}
-              disabled={anyActionInFlight && !regenerating}
-              onClick={() => regenerate(undefined as unknown as void)}
+              loading={regeneratingText}
+              disabled={anyActionInFlight && !regeneratingText}
+              onClick={() => regenerateText(undefined as unknown as void)}
             >
-              ↻ Améliorer et régénérer
+              ↻ Texte v{versions.text}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              loading={regeneratingVisual}
+              disabled={anyActionInFlight && !regeneratingVisual}
+              onClick={() => regenerateVisual(undefined as unknown as void)}
+            >
+              ↻ Visuel v{versions.visual}
             </Button>
             <Button
               variant="primary"
@@ -156,11 +222,12 @@ export function ArticleEditorScreen({ id }: { id: string }) {
                 <Button
                   variant="outline"
                   size="sm"
-                  loading={regeneratingImage}
-                  onClick={() => regenerateImage(undefined as unknown as void)}
+                  loading={regeneratingVisual}
+                  disabled={anyActionInFlight && !regeneratingVisual}
+                  onClick={() => regenerateVisual(undefined as unknown as void)}
                   className="absolute bottom-3 right-3 bg-white/90 backdrop-blur-sm"
                 >
-                  ↻ Régénérer l'image
+                  ↻ Visuel v{versions.visual}
                 </Button>
               )}
             </div>
@@ -289,17 +356,28 @@ export function ArticleEditorScreen({ id }: { id: string }) {
                 variant="outline"
                 size="md"
                 className="w-full"
-                loading={regenerating}
-                disabled={anyActionInFlight && !regenerating}
-                onClick={() => regenerate(undefined as unknown as void)}
+                loading={regeneratingText}
+                disabled={anyActionInFlight && !regeneratingText}
+                onClick={() => regenerateText(undefined as unknown as void)}
               >
-                ↻ Améliorer et régénérer
+                ↻ Texte v{versions.text}
+              </Button>
+              <Button
+                variant="outline"
+                size="md"
+                className="w-full"
+                loading={regeneratingVisual}
+                disabled={anyActionInFlight && !regeneratingVisual}
+                onClick={() => regenerateVisual(undefined as unknown as void)}
+              >
+                ↻ Visuel v{versions.visual}
               </Button>
               <Button
                 variant="danger"
                 size="md"
                 className="w-full"
-                disabled={anyActionInFlight}
+                loading={rejecting}
+                disabled={anyActionInFlight && !rejecting}
                 onClick={() => setConfirmReject(true)}
               >
                 Rejeter cet article
@@ -316,10 +394,11 @@ export function ArticleEditorScreen({ id }: { id: string }) {
         title="Rejeter l'article"
         footer={
           <>
-            <Button variant="ghost" size="sm" onClick={() => setConfirmReject(false)}>Annuler</Button>
+            <Button variant="ghost" size="sm" disabled={rejecting} onClick={() => setConfirmReject(false)}>Annuler</Button>
             <Button
               variant="danger"
               size="sm"
+              loading={rejecting}
               onClick={() => { setConfirmReject(false); reject(undefined as unknown as void) }}
             >
               Confirmer le rejet
@@ -331,7 +410,58 @@ export function ArticleEditorScreen({ id }: { id: string }) {
           Cet article sera marqué comme rejeté et ne sera pas publié sur WordPress. Cette action est irréversible.
         </p>
       </Modal>
+
+      {/* Modale confirmation suppression réelle (irréversible, distincte de
+          l'archivage qui passe par la corbeille et reste restaurable 72h) */}
+      <ConfirmDeleteModal
+        open={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        onConfirm={() => deleteArticle(undefined as unknown as void)}
+        loading={deleting}
+      />
+
+      {/* Overlay d'édition manuelle (nouveau périmètre produit) */}
+      <ManualEditOverlay
+        open={manualEditOpen}
+        onClose={() => setManualEditOpen(false)}
+        article={article}
+        saving={savingManualEdit}
+        onSave={async fields => { await saveManualEdit(fields) }}
+      />
     </div>
+  )
+}
+
+// ── IconAction ────────────────────────────────────────────────────────────────
+// Icônes d'action rondes ≥44px (cohérentes avec le bouton Supprimer de
+// /articles), traits doux.
+
+function IconAction({
+  title, onClick, disabled, loading, danger, children,
+}: {
+  title: string
+  onClick: () => void
+  disabled?: boolean
+  loading?: boolean
+  danger?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      onClick={onClick}
+      disabled={disabled}
+      className={
+        `w-11 h-11 flex items-center justify-center rounded-full transition-colors ` +
+        `focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange ` +
+        `disabled:opacity-40 disabled:pointer-events-none ` +
+        `${danger ? 'text-gray-med hover:text-danger hover:bg-danger/10' : 'text-gray-med hover:text-anthracite hover:bg-gray-pale'}`
+      }
+    >
+      {loading ? <Spinner size="sm" /> : children}
+    </button>
   )
 }
 

@@ -442,7 +442,7 @@ export function AgentScreen() {
           Reste affiché tant qu'on n'a pas pu rediriger vers l'article concret,
           pour ne jamais laisser entrevoir un état intermédiaire incomplet. */}
       {isBusy && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-cream/95 backdrop-blur-sm">
+        <div className="page-enter fixed inset-0 z-50 flex items-center justify-center bg-cream/95 backdrop-blur-sm">
           <div className="flex flex-col items-center text-center px-6 max-w-md">
             <Spinner size="lg" />
             <h2

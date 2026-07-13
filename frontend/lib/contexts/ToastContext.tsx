@@ -5,7 +5,9 @@ import {
   useEffect, ReactNode,
 } from 'react'
 
-export type ToastVariant = 'default' | 'success' | 'error' | 'warning'
+// 'achievement' = variante gamification (nouveau périmètre produit), style
+// pastel discret distinct des variantes fonctionnelles existantes.
+export type ToastVariant = 'default' | 'success' | 'error' | 'warning' | 'achievement'
 
 interface Toast {
   id: string

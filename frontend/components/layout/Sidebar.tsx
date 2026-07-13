@@ -34,6 +34,11 @@ const navItems: NavItem[] = [
     icon: (active) => <IconHistory active={active} />,
   },
   {
+    href: '/corbeille',
+    label: 'Corbeille',
+    icon: (active) => <IconTrash active={active} />,
+  },
+  {
     href: '/agent',
     label: 'Agent KORA',
     icon: (active) => <IconAgent active={active} />,
@@ -193,6 +198,16 @@ function IconAgent({ active }: { active: boolean }) {
       <circle cx="7" cy="10.5" r="1" fill="currentColor"/>
       <circle cx="11" cy="10.5" r="1" fill="currentColor"/>
       <path d="M7 13h4" stroke="currentColor" strokeWidth={active ? 2 : 1.5} strokeLinecap="round"/>
+    </svg>
+  )
+}
+
+function IconTrash({ active }: { active: boolean }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+      <path d="M3 5h12M7 5V3.5a1 1 0 011-1h2a1 1 0 011 1V5" stroke="currentColor" strokeWidth={active ? 2 : 1.5} strokeLinecap="round"/>
+      <path d="M4.5 5l.7 9.5A1.5 1.5 0 006.7 16h4.6a1.5 1.5 0 001.5-1.5L13.5 5" stroke="currentColor" strokeWidth={active ? 2 : 1.5} strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M7.5 8v4.5M10.5 8v4.5" stroke="currentColor" strokeWidth={active ? 2 : 1.5} strokeLinecap="round"/>
     </svg>
   )
 }
