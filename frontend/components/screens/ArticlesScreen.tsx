@@ -2,10 +2,9 @@
 
 import { useState, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Trash2, Archive, ArchiveRestore } from 'lucide-react'
+import { Trash2, Archive, ArchiveRestore, Check, X, Pencil } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
-import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
 import { useAsync, useMutation } from '@/lib/hooks'
 import { useToast } from '@/lib/contexts/ToastContext'
@@ -186,6 +185,7 @@ export function ArticlesScreen() {
                 article={article}
                 isArchivedView={activeStatus === 'ARCHIVED'}
                 onOpen={() => openArticle(article.id)}
+                onEdit={() => router.push(`/articles/${article.id}?edit=1`)}
                 onApprove={() => approve(article.id)}
                 onReject={() => reject(article)}
                 onArchive={() => activeStatus === 'ARCHIVED' ? unarchive(article.id) : archive(article)}
@@ -207,11 +207,12 @@ export function ArticlesScreen() {
 // propagation pour ne pas déclencher l'ouverture en même temps.
 
 function ArticleCard({
-  article, isArchivedView, onOpen, onApprove, onReject, onArchive, onDelete, approving,
+  article, isArchivedView, onOpen, onEdit, onApprove, onReject, onArchive, onDelete, approving,
 }: {
   article: Article
   isArchivedView: boolean
   onOpen: () => void
+  onEdit: () => void
   onApprove: () => void
   onReject: () => void
   onArchive: () => void
@@ -266,62 +267,100 @@ function ArticleCard({
           {article.source_nom ?? '—'} · {formatRelative(article.created_at)}
         </span>
 
-        <div className="mt-auto flex items-center justify-between gap-2 pt-2 border-t border-gray-pale">
-          {article.status === 'PENDING_REVIEW' ? (
-            <div className="flex gap-2">
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={stop(onApprove)}
-                loading={approving}
-                aria-label={`Approuver : ${article.titre}`}
-              >
-                Approuver
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={stop(onReject)}
-                aria-label={`Rejeter : ${article.titre}`}
-              >
-                Rejeter
-              </Button>
-            </div>
-          ) : article.status === 'PUBLISHED' && article.wp_url ? (
-            <a
-              href={article.wp_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="font-heading text-[12px] text-blue-txt hover:underline min-h-[44px] flex items-center"
-            >
-              Voir sur WP ↗
-            </a>
-          ) : <span />}
+        {article.status === 'PUBLISHED' && article.wp_url && (
+          <a
+            href={article.wp_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="font-heading text-[12px] text-blue-txt hover:underline min-h-[44px] flex items-center mb-1"
+          >
+            Voir sur WP ↗
+          </a>
+        )}
 
-          <div className="flex items-center shrink-0">
-            <button
-              onClick={stop(onArchive)}
-              title={isArchivedView ? 'Désarchiver' : 'Archiver'}
-              className="w-11 h-11 flex items-center justify-center text-gray-med hover:text-anthracite transition-colors rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange"
-              aria-label={`${isArchivedView ? 'Désarchiver' : 'Archiver'} : ${article.titre}`}
-            >
-              {isArchivedView ? <ArchiveRestore size={18} aria-hidden="true" /> : <Archive size={18} aria-hidden="true" />}
-            </button>
-            {!isArchivedView && (
-              <button
-                onClick={stop(onDelete)}
-                title="Supprimer"
-                className="w-11 h-11 flex items-center justify-center text-gray-med hover:text-danger transition-colors rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger"
-                aria-label={`Supprimer : ${article.titre}`}
+        {/* Icônes rondes pastel — 5 en attente (approuver/rejeter/éditer/
+            archiver/supprimer), 3 sinon (éditer/archiver/supprimer), 2 en
+            vue Archivés (désarchiver/supprimer), cf. wireframes fournis. */}
+        <div className="mt-auto flex items-center gap-1.5 pt-2 border-t border-gray-pale">
+          {!isArchivedView && article.status === 'PENDING_REVIEW' && (
+            <>
+              <RoundIconButton
+                onClick={stop(onApprove)}
+                title="Approuver"
+                label={`Approuver : ${article.titre}`}
+                loading={approving}
+                className="bg-sage/15 text-sage hover:bg-sage/25"
               >
-                <Trash2 size={18} aria-hidden="true" />
-              </button>
-            )}
-          </div>
+                <Check size={16} aria-hidden="true" />
+              </RoundIconButton>
+              <RoundIconButton
+                onClick={stop(onReject)}
+                title="Rejeter"
+                label={`Rejeter : ${article.titre}`}
+                className="bg-danger/10 text-danger hover:bg-danger/20"
+              >
+                <X size={16} aria-hidden="true" />
+              </RoundIconButton>
+            </>
+          )}
+
+          {!isArchivedView && (
+            <RoundIconButton onClick={stop(onEdit)} title="Éditer" label={`Éditer : ${article.titre}`}>
+              <Pencil size={16} aria-hidden="true" />
+            </RoundIconButton>
+          )}
+
+          <RoundIconButton
+            onClick={stop(onArchive)}
+            title={isArchivedView ? 'Désarchiver' : 'Archiver'}
+            label={`${isArchivedView ? 'Désarchiver' : 'Archiver'} : ${article.titre}`}
+          >
+            {isArchivedView ? <ArchiveRestore size={16} aria-hidden="true" /> : <Archive size={16} aria-hidden="true" />}
+          </RoundIconButton>
+
+          <RoundIconButton
+            onClick={stop(onDelete)}
+            title="Supprimer"
+            label={`Supprimer : ${article.titre}`}
+            danger
+          >
+            <Trash2 size={16} aria-hidden="true" />
+          </RoundIconButton>
         </div>
       </div>
     </Card>
+  )
+}
+
+function RoundIconButton({
+  onClick, title, label, loading, danger, className = '', children,
+}: {
+  onClick: (e: React.MouseEvent) => void
+  title: string
+  label: string
+  loading?: boolean
+  danger?: boolean
+  className?: string
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={loading}
+      title={title}
+      aria-label={label}
+      className={
+        `w-11 h-11 shrink-0 rounded-full flex items-center justify-center transition-colors ` +
+        `focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange disabled:opacity-50 ` +
+        `${className || (danger
+          ? 'bg-gray-pale text-gray-med hover:bg-danger/10 hover:text-danger'
+          : 'bg-gray-pale text-gray-med hover:bg-gray-light hover:text-anthracite'
+        )}`
+      }
+    >
+      {loading ? <span className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" /> : children}
+    </button>
   )
 }
 

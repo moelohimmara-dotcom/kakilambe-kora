@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import ReactMarkdown from 'react-markdown'
 import { Archive, Pencil, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
@@ -22,10 +22,13 @@ import type { Article } from '@/lib/types'
 
 export function ArticleEditorScreen({ id }: { id: string }) {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { show } = useToast()
   const [evaporating, setEvaporating] = useState(false)
   const [confirmReject, setConfirmReject] = useState(false)
-  const [manualEditOpen, setManualEditOpen] = useState(false)
+  // ?edit=1 (venu de l'icône Éditer sur /articles) ouvre directement l'overlay
+  // d'édition manuelle au chargement, sans étape intermédiaire.
+  const [manualEditOpen, setManualEditOpen] = useState(() => searchParams.get('edit') === '1')
   const [versions, setVersions] = useState<RegenVersions>(() => regenerationApi.getVersions(id))
 
   const fetchArticle = useCallback(() => articleApi.get(id), [id])
