@@ -1,11 +1,11 @@
 // Types TypeScript partagés KORA
 
 export type ArticleStatus = 'DRAFT' | 'PENDING_REVIEW' | 'PUBLISHED' | 'REJECTED' | 'FAILED'
-export type ArticleOrigin = 'AGENT_AUTO' | 'AGENT_SEMI' | 'CHAT_EXPORT'
+// 'CHAT_EXPORT' retiré — origine liée au chat, supprimé (voir ChatMessage/ChatSession ci-dessous).
+export type ArticleOrigin = 'AGENT_AUTO' | 'AGENT_SEMI'
 export type ProviderStatus = 'ACTIVE' | 'RATE_LIMITED' | 'EXHAUSTED' | 'OFFLINE'
 export type CycleStatus = 'RUNNING' | 'COMPLETED' | 'FAILED' | 'PAUSED' | 'CANCELLED'
 export type CycleMode = 'auto' | 'semi'
-export type MessageRole = 'user' | 'assistant' | 'system'
 export type BadgeVariant = 'orange' | 'sage' | 'blue' | 'gray' | 'danger' | 'warning'
 
 export interface Article {
@@ -50,22 +50,6 @@ export interface Cycle {
   articles_rejected: number
   started_at: string
   completed_at?: string
-}
-
-export interface ChatMessage {
-  role: MessageRole
-  content: string
-  created_at?: string
-}
-
-export interface ChatSession {
-  id: string
-  title?: string | null
-  is_pinned: boolean
-  status: 'active' | 'archived'
-  message_count: number
-  created_at: string
-  updated_at: string
 }
 
 export interface RSSSource {
