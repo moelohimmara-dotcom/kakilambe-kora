@@ -479,6 +479,21 @@ body {
   margin: 1.4em 0 0.6em;
 }
 .prose-article em { font-style: italic; }
+.prose-article strong { font-weight: 700; }
+.prose-article h1 {
+  font-family: var(--font-heading);
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--anthracite);
+  margin: 1.4em 0 0.6em;
+}
+.prose-article ul, .prose-article ol {
+  margin: 0 0 1.2em;
+  padding-left: 1.4em;
+}
+.prose-article ul { list-style: disc; }
+.prose-article ol { list-style: decimal; }
+.prose-article li { margin-bottom: 0.3em; }
 
 /* ── Status pill ─────────────────────────────────────────────────── */
 .status-dot {

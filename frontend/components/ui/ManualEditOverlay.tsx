@@ -1,23 +1,25 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Modal } from './Modal'
 import { Button } from './Button'
 import { ProgressRing } from './ProgressRing'
+import { RichTextEditor } from './RichTextEditor'
 import type { Article } from '@/lib/types'
 
 // Overlay d'édition manuelle (nouveau périmètre produit, validé
 // explicitement) — distinct de l'édition inline existante (EditableField
-// dans ArticleEditorScreen.tsx, conservée telle quelle). Fournit une barre
-// d'outils Markdown (gras/italique/titre/liste) sur titre/chapeau/corps/SEO.
+// dans ArticleEditorScreen.tsx, conservée telle quelle).
 //
-// Note honnête : seul le champ "corps" est réellement rendu en Markdown
-// ailleurs dans l'application (via ReactMarkdown). "Titre" et
-// "Méta-description SEO" sont des champs texte brut envoyés tels quels à
-// WordPress/aux moteurs de recherche — y insérer des symboles Markdown
-// (**gras**) les ferait apparaître littéralement en production. La barre
-// d'outils reste disponible partout comme demandé, avec un avertissement
-// inline sur ces deux champs plutôt qu'une omission silencieuse.
+// Seul le "Corps" passe par un vrai éditeur WYSIWYG (RichTextEditor, TipTap)
+// — c'est le seul champ réellement rendu en Markdown ailleurs dans
+// l'application (via ReactMarkdown). "Titre" et "Méta-description SEO" sont
+// des champs texte brut envoyés tels quels à WordPress/aux moteurs de
+// recherche : y appliquer du gras/italique produirait des symboles Markdown
+// littéraux dans un titre de publication ou une meta-tag, donc ils restent
+// en simple texte. "Chapeau" n'est pas non plus rendu en Markdown ailleurs
+// (affiché en italique via CSS fixe, pas de formatage riche) — texte simple
+// également.
 
 export interface ManualEditFields {
   titre: string
@@ -41,9 +43,11 @@ export function ManualEditOverlay({ open, onClose, article, onSave, saving }: Ma
     corps: article.corps ?? '',
     meta_description: article.meta_description ?? '',
   })
+  // RichTextEditor n'est pas un composant contrôlé (TipTap n'aime pas
+  // recevoir un nouveau `content` à chaque frappe) — ce compteur force son
+  // remontage uniquement à l'ouverture, pour repartir du contenu réel.
+  const [sessionKey, setSessionKey] = useState(0)
 
-  // Resynchronise à chaque ouverture (pas à chaque frappe) pour repartir du
-  // contenu réel courant, y compris si l'article a changé entre-temps.
   useEffect(() => {
     if (open) {
       setFields({
@@ -52,6 +56,7 @@ export function ManualEditOverlay({ open, onClose, article, onSave, saving }: Ma
         corps: article.corps ?? '',
         meta_description: article.meta_description ?? '',
       })
+      setSessionKey(k => k + 1)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
@@ -60,9 +65,7 @@ export function ManualEditOverlay({ open, onClose, article, onSave, saving }: Ma
     await onSave(fields)
   }
 
-  // Gamification (nouveau périmètre) — complétude SEO cosmétique : titre,
-  // chapeau, corps substantiel et méta-description dans la limite affichée
-  // ailleurs (155 caractères) comptent chacun pour un quart.
+  // Gamification (nouveau périmètre) — complétude SEO cosmétique.
   const seoChecks = [
     fields.titre.trim().length > 0,
     fields.chapeau.trim().length > 0,
@@ -79,33 +82,43 @@ export function ManualEditOverlay({ open, onClose, article, onSave, saving }: Ma
           <span className="font-heading text-[11px] text-anthracite">Complétude SEO</span>
         </div>
       </div>
+
       <div className="space-y-5 max-h-[65vh] overflow-y-auto pr-1">
-        <MarkdownField
+        <PlainField
           label="Titre"
           value={fields.titre}
           onChange={v => setFields(p => ({ ...p, titre: v }))}
-          rows={2}
-          warnPlainText
         />
-        <MarkdownField
+        <PlainField
           label="Chapeau"
           value={fields.chapeau}
           onChange={v => setFields(p => ({ ...p, chapeau: v }))}
-          rows={3}
+          multiline
         />
-        <MarkdownField
-          label="Corps"
-          value={fields.corps}
-          onChange={v => setFields(p => ({ ...p, corps: v }))}
-          rows={12}
-        />
-        <MarkdownField
-          label="Méta-description SEO"
-          value={fields.meta_description}
-          onChange={v => setFields(p => ({ ...p, meta_description: v }))}
-          rows={2}
-          warnPlainText
-        />
+
+        <div>
+          <label className="block font-heading text-[12px] font-semibold text-gray-dk uppercase tracking-wide mb-1.5">
+            Corps
+          </label>
+          <RichTextEditor
+            key={sessionKey}
+            content={fields.corps}
+            onChange={v => setFields(p => ({ ...p, corps: v }))}
+            placeholder="Corps de l'article…"
+          />
+        </div>
+
+        <div>
+          <PlainField
+            label="Méta-description SEO"
+            value={fields.meta_description}
+            onChange={v => setFields(p => ({ ...p, meta_description: v }))}
+            multiline
+          />
+          <span className={`font-heading text-[10px] ${fields.meta_description.length > 155 ? 'text-danger' : 'text-gray-med'}`}>
+            {fields.meta_description.length}/155
+          </span>
+        </div>
       </div>
 
       <div className="flex items-center justify-end gap-3 mt-5 pt-4 border-t border-gray-pale">
@@ -118,85 +131,39 @@ export function ManualEditOverlay({ open, onClose, article, onSave, saving }: Ma
   )
 }
 
-// ── Champ avec barre d'outils Markdown ──────────────────────────────────────
-
-function MarkdownField({
-  label, value, onChange, rows, warnPlainText,
+// Champ texte brut (pas de Markdown) — titre/chapeau/méta-description sont
+// envoyés tels quels à WordPress/aux moteurs de recherche, du formatage riche
+// y produirait des symboles littéraux plutôt qu'un rendu.
+function PlainField({
+  label, value, onChange, multiline,
 }: {
   label: string
   value: string
   onChange: (v: string) => void
-  rows: number
-  warnPlainText?: boolean
+  multiline?: boolean
 }) {
-  const ref = useRef<HTMLTextAreaElement>(null)
-
-  function wrapSelection(before: string, after: string) {
-    const el = ref.current
-    if (!el) return
-    const { selectionStart: start, selectionEnd: end } = el
-    const selected = value.slice(start, end)
-    const next = value.slice(0, start) + before + selected + after + value.slice(end)
-    onChange(next)
-    requestAnimationFrame(() => {
-      el.focus()
-      el.setSelectionRange(start + before.length, start + before.length + selected.length)
-    })
-  }
-
-  function prefixLines(prefix: string) {
-    const el = ref.current
-    if (!el) return
-    const { selectionStart: start, selectionEnd: end } = el
-    const lineStart = value.lastIndexOf('\n', start - 1) + 1
-    const before = value.slice(0, lineStart)
-    const target = value.slice(lineStart, end)
-    const after = value.slice(end)
-    const transformed = target.split('\n').map(l => prefix + l).join('\n')
-    onChange(before + transformed + after)
-    requestAnimationFrame(() => el.focus())
-  }
-
   return (
     <div>
-      <div className="flex items-center justify-between mb-1.5">
-        <label className="block font-heading text-[12px] font-semibold text-gray-dk uppercase tracking-wide">
-          {label}
-        </label>
-        <div className="flex gap-1">
-          <ToolbarButton title="Gras" onClick={() => wrapSelection('**', '**')}><strong>G</strong></ToolbarButton>
-          <ToolbarButton title="Italique" onClick={() => wrapSelection('*', '*')}><em>I</em></ToolbarButton>
-          <ToolbarButton title="Titre" onClick={() => prefixLines('## ')}>H</ToolbarButton>
-          <ToolbarButton title="Liste" onClick={() => prefixLines('- ')}>•</ToolbarButton>
-        </div>
-      </div>
-      {warnPlainText && (
-        <p className="font-heading text-[10px] text-gray-med mb-1.5">
-          Champ texte brut (WordPress/SEO) — la mise en forme Markdown n&apos;y est pas rendue, évitez-la ici.
-        </p>
+      <label className="block font-heading text-[12px] font-semibold text-gray-dk uppercase tracking-wide mb-1.5">
+        {label}
+      </label>
+      {multiline ? (
+        <textarea
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          rows={2}
+          className="form-input w-full"
+          aria-label={label}
+        />
+      ) : (
+        <input
+          type="text"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          className="form-input w-full"
+          aria-label={label}
+        />
       )}
-      <textarea
-        ref={ref}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        rows={rows}
-        className="form-input font-mono text-[12px] resize-y w-full"
-        aria-label={label}
-      />
     </div>
-  )
-}
-
-function ToolbarButton({ title, onClick, children }: { title: string; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      title={title}
-      aria-label={title}
-      onClick={onClick}
-      className="w-8 h-8 flex items-center justify-center rounded-md border border-gray-light text-[12px] text-gray-dk hover:bg-gray-pale hover:text-anthracite transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange"
-    >
-      {children}
-    </button>
   )
 }
