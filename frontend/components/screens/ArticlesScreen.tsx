@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Trash2, Archive, ArchiveRestore, Check, X, Pencil } from 'lucide-react'
+import { Trash2, Archive, Check, X, Pencil } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
 import { Spinner } from '@/components/ui/Spinner'
@@ -15,18 +15,12 @@ import { gamificationApi } from '@/lib/gamificationApi'
 import { formatRelative, statusLabel, statusVariant } from '@/lib/utils'
 import type { Article, ArticleStatus } from '@/lib/types'
 
-// 'ARCHIVED' est un pseudo-statut front-end (voir lib/archiveApi.ts) — le
-// backend n'a pas de colonne ARCHIVED, ce filtre recoupe côté client la
-// liste complète avec le suivi local des ids archivés.
-type TabValue = ArticleStatus | '' | 'ARCHIVED'
-
-const STATUS_TABS: { label: string; value: TabValue }[] = [
+const STATUS_TABS: { label: string; value: ArticleStatus | '' }[] = [
   { label: 'Tous', value: '' },
   { label: 'En attente', value: 'PENDING_REVIEW' },
   { label: 'Publiés', value: 'PUBLISHED' },
   { label: 'Brouillons', value: 'DRAFT' },
   { label: 'Rejetés', value: 'REJECTED' },
-  { label: 'Archivés', value: 'ARCHIVED' },
 ]
 
 const VALID_STATUSES = new Set(STATUS_TABS.map(t => t.value))
@@ -35,14 +29,15 @@ export function ArticlesScreen() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const statusFromUrl = searchParams.get('status') ?? ''
-  const [activeStatus, setActiveStatus] = useState<TabValue>(
-    VALID_STATUSES.has(statusFromUrl as TabValue) ? (statusFromUrl as TabValue) : ''
+  const [activeStatus, setActiveStatus] = useState<ArticleStatus | ''>(
+    VALID_STATUSES.has(statusFromUrl as ArticleStatus) ? (statusFromUrl as ArticleStatus) : ''
   )
   const [evaporating, setEvaporating] = useState<string | null>(null)
   const [navigatingId, setNavigatingId] = useState<string | null>(null)
-  // Suivi local — archivage persistant (lib/archiveApi.ts) et corbeille
-  // (lib/trashApi.ts, rejetés + supprimés en attente de purge) sont deux
-  // stores distincts, le backend n'ayant ni l'un ni l'autre en base.
+  // Suivi local — l'archivage (lib/archiveApi.ts) retire l'article de cette
+  // grille et le fait apparaître dans la section "Archive" de /history (pas
+  // ici) ; la corbeille (lib/trashApi.ts, rejetés + supprimés en attente de
+  // purge) est un store distinct. Le backend n'a ni l'un ni l'autre en base.
   const [archivedIds, setArchivedIds] = useState<Set<string>>(() => archiveApi.archivedIds())
   const [trashedIds, setTrashedIds] = useState<Set<string>>(() => trashApi.trashedIds())
   const { show } = useToast()
@@ -56,14 +51,12 @@ export function ArticlesScreen() {
   }
 
   const fetchArticles = useCallback(
-    () => articleApi.list(activeStatus === 'ARCHIVED' ? undefined : (activeStatus || undefined)),
+    () => articleApi.list(activeStatus || undefined),
     [activeStatus]
   )
   const { data, loading, refetch } = useAsync(fetchArticles, [activeStatus])
   const rawArticles = (data as { items: Article[] } | null)?.items ?? []
-  const articles = activeStatus === 'ARCHIVED'
-    ? rawArticles.filter(a => archivedIds.has(a.id))
-    : rawArticles.filter(a => !archivedIds.has(a.id) && !trashedIds.has(a.id))
+  const articles = rawArticles.filter(a => !archivedIds.has(a.id) && !trashedIds.has(a.id))
 
   const { mutate: approve, loading: approving } = useMutation(async (id: string) => {
     setEvaporating(id)
@@ -92,21 +85,16 @@ export function ArticlesScreen() {
     show('Article rejeté — envoyé à la corbeille (purge dans 1h)', 'warning')
   })
 
-  // Archivage persistant — distinct de la corbeille, aucune purge, filtrable
-  // sous l'onglet "Archivés" (voir lib/archiveApi.ts).
+  // Archivage persistant — distinct de la corbeille, aucune purge. L'article
+  // quitte cette grille et apparaît dans la section "Archive" de /history,
+  // gardé de côté "pour plus tard" (voir lib/archiveApi.ts).
   const { mutate: archive } = useMutation(async (article: Article) => {
     setEvaporating(article.id)
     await new Promise(r => setTimeout(r, 480))
     await archiveApi.archiveArticle(article.id)
     setArchivedIds(archiveApi.archivedIds())
     setEvaporating(null)
-    show('Article archivé', 'success')
-  })
-
-  const { mutate: unarchive } = useMutation(async (id: string) => {
-    await archiveApi.unarchiveArticle(id)
-    setArchivedIds(archiveApi.archivedIds())
-    show('Article désarchivé', 'success')
+    show('Article archivé — retrouvable dans Historique › Archive', 'success')
   })
 
   // Supprimer envoie désormais à la corbeille (72h, restaurable) au lieu
@@ -183,12 +171,11 @@ export function ArticlesScreen() {
             >
               <ArticleCard
                 article={article}
-                isArchivedView={activeStatus === 'ARCHIVED'}
                 onOpen={() => openArticle(article.id)}
                 onEdit={() => router.push(`/articles/${article.id}?edit=1`)}
                 onApprove={() => approve(article.id)}
                 onReject={() => reject(article)}
-                onArchive={() => activeStatus === 'ARCHIVED' ? unarchive(article.id) : archive(article)}
+                onArchive={() => archive(article)}
                 onDelete={() => deleteArticle(article)}
                 approving={approving && evaporating === article.id}
               />
@@ -207,10 +194,9 @@ export function ArticlesScreen() {
 // propagation pour ne pas déclencher l'ouverture en même temps.
 
 function ArticleCard({
-  article, isArchivedView, onOpen, onEdit, onApprove, onReject, onArchive, onDelete, approving,
+  article, onOpen, onEdit, onApprove, onReject, onArchive, onDelete, approving,
 }: {
   article: Article
-  isArchivedView: boolean
   onOpen: () => void
   onEdit: () => void
   onApprove: () => void
@@ -280,10 +266,10 @@ function ArticleCard({
         )}
 
         {/* Icônes rondes pastel — 5 en attente (approuver/rejeter/éditer/
-            archiver/supprimer), 3 sinon (éditer/archiver/supprimer), 2 en
-            vue Archivés (désarchiver/supprimer), cf. wireframes fournis. */}
+            archiver/supprimer), 3 sinon (éditer/archiver/supprimer), cf.
+            wireframes fournis. */}
         <div className="mt-auto flex items-center gap-1.5 pt-2 border-t border-gray-pale">
-          {!isArchivedView && article.status === 'PENDING_REVIEW' && (
+          {article.status === 'PENDING_REVIEW' && (
             <>
               <RoundIconButton
                 onClick={stop(onApprove)}
@@ -305,18 +291,16 @@ function ArticleCard({
             </>
           )}
 
-          {!isArchivedView && (
-            <RoundIconButton onClick={stop(onEdit)} title="Éditer" label={`Éditer : ${article.titre}`}>
-              <Pencil size={16} aria-hidden="true" />
-            </RoundIconButton>
-          )}
+          <RoundIconButton onClick={stop(onEdit)} title="Éditer" label={`Éditer : ${article.titre}`}>
+            <Pencil size={16} aria-hidden="true" />
+          </RoundIconButton>
 
           <RoundIconButton
             onClick={stop(onArchive)}
-            title={isArchivedView ? 'Désarchiver' : 'Archiver'}
-            label={`${isArchivedView ? 'Désarchiver' : 'Archiver'} : ${article.titre}`}
+            title="Archiver"
+            label={`Archiver : ${article.titre}`}
           >
-            {isArchivedView ? <ArchiveRestore size={16} aria-hidden="true" /> : <Archive size={16} aria-hidden="true" />}
+            <Archive size={16} aria-hidden="true" />
           </RoundIconButton>
 
           <RoundIconButton
@@ -364,8 +348,8 @@ function RoundIconButton({
   )
 }
 
-function EmptyState({ status }: { status: TabValue }) {
-  const label = status === 'ARCHIVED' ? 'Archivés' : status ? statusLabel(status as ArticleStatus) : null
+function EmptyState({ status }: { status: ArticleStatus | '' }) {
+  const label = status ? statusLabel(status) : null
   return (
     <div className="empty-state">
       <div className="w-16 h-16 rounded-xl bg-gray-pale flex items-center justify-center">

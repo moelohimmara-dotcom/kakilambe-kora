@@ -87,10 +87,13 @@ export function ArticleEditorScreen({ id }: { id: string }) {
     }
   })
 
+  // Garder "pour plus tard" — l'article quitte /articles et apparaît dans
+  // la section Archive de /history, d'où il pourra être désarchivé pour
+  // revenir directement ici en édition.
   const { mutate: archiveArticle, loading: archiving } = useMutation(async () => {
     await archiveApi.archiveArticle(id)
-    show('Article archivé', 'success')
-    router.push('/articles')
+    show('Article archivé — retrouvable dans Historique › Archive', 'success')
+    router.push('/history')
   })
 
   const { mutate: deleteArticle, loading: deleting } = useMutation(async () => {

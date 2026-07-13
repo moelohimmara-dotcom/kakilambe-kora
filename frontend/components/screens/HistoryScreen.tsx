@@ -1,13 +1,17 @@
 'use client'
 
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { ArchiveRestore } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
 import { Spinner } from '@/components/ui/Spinner'
-import { useAsync } from '@/lib/hooks'
-import { cycleApi } from '@/lib/api'
-import { formatDate, formatTime } from '@/lib/utils'
-import type { Cycle } from '@/lib/types'
+import { useAsync, useMutation } from '@/lib/hooks'
+import { useToast } from '@/lib/contexts/ToastContext'
+import { cycleApi, articleApi } from '@/lib/api'
+import { archiveApi } from '@/lib/archiveApi'
+import { formatDate, formatTime, formatRelative } from '@/lib/utils'
+import type { Cycle, Article } from '@/lib/types'
 
 const STATUS_BADGE: Record<string, { label: string; variant: 'orange' | 'sage' | 'danger' | 'warning' | 'gray' }> = {
   RUNNING:   { label: 'En cours', variant: 'orange' },
@@ -16,7 +20,11 @@ const STATUS_BADGE: Record<string, { label: string; variant: 'orange' | 'sage' |
   FAILED:    { label: 'Échoué', variant: 'danger' },
 }
 
+type View = 'cycles' | 'archive'
+
 export function HistoryScreen() {
+  const [view, setView] = useState<View>('cycles')
+
   const fetchCycles = useCallback(() => cycleApi.list(), [])
   const { data, loading } = useAsync(fetchCycles)
   const cycles: Cycle[] = (data as { items: Cycle[] } | null)?.items ?? []
@@ -31,44 +39,145 @@ export function HistoryScreen() {
   return (
     <div className="p-6 md:p-8 max-w-4xl">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="font-heading font-bold text-2xl text-anthracite">Historique des cycles</h1>
+      <div className="mb-6">
+        <h1 className="font-heading font-bold text-2xl text-anthracite">Historique</h1>
         <p className="font-heading text-[13px] text-gray-dk mt-0.5">
           {loading ? '…' : `${cycles.length} cycle${cycles.length !== 1 ? 's' : ''} au total`}
         </p>
       </div>
 
-      {/* KPIs */}
-      <div className="grid grid-cols-3 gap-4 mb-8">
-        <Card className="text-center">
-          <div className="font-heading font-bold text-3xl text-orange">{totalPublished}</div>
-          <p className="font-heading text-[11px] text-gray-dk mt-1">Articles publiés</p>
-        </Card>
-        <Card className="text-center">
-          <div className="font-heading font-bold text-3xl text-sage">{successRate}%</div>
-          <p className="font-heading text-[11px] text-gray-dk mt-1">Taux de succès</p>
-        </Card>
-        <Card className="text-center">
-          <div className="font-heading font-bold text-3xl text-danger">{totalFailed}</div>
-          <p className="font-heading text-[11px] text-gray-dk mt-1">Cycles échoués</p>
-        </Card>
+      {/* Onglets Cycles / Archive */}
+      <div className="flex gap-1 mb-6 bg-gray-pale rounded-lg p-1 w-fit" role="tablist" aria-label="Vue de l'historique">
+        {([
+          { key: 'cycles' as const, label: 'Cycles' },
+          { key: 'archive' as const, label: 'Archive' },
+        ]).map(tab => (
+          <button
+            key={tab.key}
+            role="tab"
+            aria-selected={view === tab.key}
+            onClick={() => setView(tab.key)}
+            className={
+              `px-4 min-h-[44px] rounded-md font-heading text-[12px] font-semibold transition-all ` +
+              `focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange ` +
+              `${view === tab.key ? 'bg-white text-anthracite shadow-sm' : 'text-gray-dk hover:text-anthracite'}`
+            }
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-      {/* Tableau */}
-      {loading ? (
-        <div className="flex justify-center py-16"><Spinner size="lg" /></div>
-      ) : cycles.length === 0 ? (
-        <div className="empty-state">
-          <p className="font-heading font-semibold text-[15px] text-anthracite">Aucun cycle</p>
-          <p className="font-heading text-[13px] text-gray-dk">Les cycles KORA apparaîtront ici.</p>
-        </div>
+      {view === 'cycles' ? (
+        <>
+          {/* KPIs */}
+          <div className="grid grid-cols-3 gap-4 mb-8">
+            <Card className="text-center">
+              <div className="font-heading font-bold text-3xl text-orange">{totalPublished}</div>
+              <p className="font-heading text-[11px] text-gray-dk mt-1">Articles publiés</p>
+            </Card>
+            <Card className="text-center">
+              <div className="font-heading font-bold text-3xl text-sage">{successRate}%</div>
+              <p className="font-heading text-[11px] text-gray-dk mt-1">Taux de succès</p>
+            </Card>
+            <Card className="text-center">
+              <div className="font-heading font-bold text-3xl text-danger">{totalFailed}</div>
+              <p className="font-heading text-[11px] text-gray-dk mt-1">Cycles échoués</p>
+            </Card>
+          </div>
+
+          {/* Tableau */}
+          {loading ? (
+            <div className="flex justify-center py-16"><Spinner size="lg" /></div>
+          ) : cycles.length === 0 ? (
+            <div className="empty-state">
+              <p className="font-heading font-semibold text-[15px] text-anthracite">Aucun cycle</p>
+              <p className="font-heading text-[13px] text-gray-dk">Les cycles KORA apparaîtront ici.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {cycles.map(cycle => (
+                <CycleRow key={cycle.id} cycle={cycle} />
+              ))}
+            </div>
+          )}
+        </>
       ) : (
-        <div className="space-y-3">
-          {cycles.map(cycle => (
-            <CycleRow key={cycle.id} cycle={cycle} />
-          ))}
-        </div>
+        <ArchiveSection />
       )}
+    </div>
+  )
+}
+
+// ── Section Archive ───────────────────────────────────────────────────────────
+// Les articles archivés depuis /articles ou /articles/{id} (lib/archiveApi.ts)
+// sont gardés "pour plus tard" ici plutôt que dans le flux actif de travail —
+// désarchiver renvoie directement à l'article pour édition. Le backend n'a
+// pas de colonne ARCHIVED ni d'endpoint de recherche par id : la liste est
+// reconstruite en filtrant côté client la page 1 de tous les articles (même
+// limite déjà documentée ailleurs pour la pagination).
+
+function ArchiveSection() {
+  const router = useRouter()
+  const { show } = useToast()
+
+  const fetchAll = useCallback(() => articleApi.list(undefined), [])
+  const { data, loading, refetch } = useAsync(fetchAll)
+  const archivedIds = archiveApi.archivedIds()
+  const rawArticles = (data as { items: Article[] } | null)?.items ?? []
+  const archived = rawArticles.filter(a => archivedIds.has(a.id))
+
+  const { mutate: unarchive } = useMutation(async (article: Article) => {
+    await archiveApi.unarchiveArticle(article.id)
+    show('Article désarchivé', 'success')
+    router.push(`/articles/${article.id}`)
+  })
+
+  if (loading) {
+    return <div className="flex justify-center py-16"><Spinner size="lg" /></div>
+  }
+
+  if (archived.length === 0) {
+    return (
+      <div className="empty-state">
+        <div className="w-16 h-16 rounded-xl bg-gray-pale flex items-center justify-center">
+          <span className="font-heading text-2xl text-gray-med">🗂</span>
+        </div>
+        <p className="font-heading font-semibold text-[15px] text-anthracite">Aucun article archivé</p>
+        <p className="font-heading text-[13px] text-gray-dk max-w-xs">
+          Les articles gardés "pour plus tard" depuis /articles apparaîtront ici.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      {archived.map(article => (
+        <Card key={article.id} className="flex items-center gap-4">
+          {article.image_url ? (
+            <img src={article.image_url} alt="" className="w-14 h-14 rounded-md object-cover shrink-0 bg-gray-pale" />
+          ) : (
+            <div className="w-14 h-14 rounded-md bg-orange/10 flex items-center justify-center shrink-0">
+              <span className="text-orange font-heading font-bold text-lg">/</span>
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <p className="font-heading font-semibold text-[13px] text-anthracite truncate">{article.titre}</p>
+            <p className="font-heading text-[11px] text-gray-dk mt-0.5 truncate">
+              {article.source_nom ?? '—'} · {formatRelative(article.created_at)}
+            </p>
+          </div>
+          <button
+            onClick={() => unarchive(article)}
+            title="Désarchiver et éditer"
+            aria-label={`Désarchiver et éditer : ${article.titre}`}
+            className="w-11 h-11 shrink-0 rounded-full flex items-center justify-center bg-gray-pale text-gray-med hover:bg-gray-light hover:text-anthracite transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange"
+          >
+            <ArchiveRestore size={18} aria-hidden="true" />
+          </button>
+        </Card>
+      ))}
     </div>
   )
 }
