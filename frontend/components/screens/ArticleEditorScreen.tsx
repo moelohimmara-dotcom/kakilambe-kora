@@ -9,13 +9,13 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Spinner } from '@/components/ui/Spinner'
 import { Modal } from '@/components/ui/Modal'
-import { ConfirmDeleteModal } from '@/components/ui/ConfirmDeleteModal'
 import { ManualEditOverlay, ManualEditFields } from '@/components/ui/ManualEditOverlay'
 import { useAsync, useMutation } from '@/lib/hooks'
 import { useToast } from '@/lib/contexts/ToastContext'
 import { articleApi } from '@/lib/api'
 import { regenerationApi, RegenVersions } from '@/lib/regenerationApi'
 import { trashApi } from '@/lib/trashApi'
+import { archiveApi } from '@/lib/archiveApi'
 import { gamificationApi } from '@/lib/gamificationApi'
 import { formatDate, statusLabel, statusVariant, wordCount } from '@/lib/utils'
 import type { Article } from '@/lib/types'
@@ -25,7 +25,6 @@ export function ArticleEditorScreen({ id }: { id: string }) {
   const { show } = useToast()
   const [evaporating, setEvaporating] = useState(false)
   const [confirmReject, setConfirmReject] = useState(false)
-  const [confirmDelete, setConfirmDelete] = useState(false)
   const [manualEditOpen, setManualEditOpen] = useState(false)
   const [versions, setVersions] = useState<RegenVersions>(() => regenerationApi.getVersions(id))
 
@@ -48,8 +47,10 @@ export function ArticleEditorScreen({ id }: { id: string }) {
   })
 
   const { mutate: reject, loading: rejecting } = useMutation(async () => {
+    if (!article) return
     await articleApi.reject(id)
-    show('Article rejeté', 'warning')
+    await trashApi.sendToTrash(article, 'rejected')
+    show('Article rejeté — envoyé à la corbeille (purge dans 1h)', 'warning')
     router.push('/dashboard')
   })
 
@@ -84,16 +85,15 @@ export function ArticleEditorScreen({ id }: { id: string }) {
   })
 
   const { mutate: archiveArticle, loading: archiving } = useMutation(async () => {
-    if (!article) return
-    await trashApi.archiveArticle(article)
-    show('Article envoyé à la corbeille — restaurable pendant 72h', 'warning')
+    await archiveApi.archiveArticle(id)
+    show('Article archivé', 'success')
     router.push('/articles')
   })
 
   const { mutate: deleteArticle, loading: deleting } = useMutation(async () => {
-    await articleApi.delete(id)
-    setConfirmDelete(false)
-    show('Article supprimé définitivement', 'warning')
+    if (!article) return
+    await trashApi.sendToTrash(article, 'deleted')
+    show('Article envoyé à la corbeille (purge dans 72h)', 'warning')
     router.push('/articles')
   })
 
@@ -146,7 +146,7 @@ export function ArticleEditorScreen({ id }: { id: string }) {
           <IconAction title="Archiver" disabled={anyActionInFlight} loading={archiving} onClick={() => archiveArticle(undefined as unknown as void)}>
             <Archive size={16} aria-hidden="true" />
           </IconAction>
-          <IconAction title="Supprimer définitivement" disabled={anyActionInFlight} onClick={() => setConfirmDelete(true)} danger>
+          <IconAction title="Supprimer" disabled={anyActionInFlight} loading={deleting} onClick={() => deleteArticle(undefined as unknown as void)} danger>
             <Trash2 size={16} aria-hidden="true" />
           </IconAction>
         </div>
@@ -407,18 +407,9 @@ export function ArticleEditorScreen({ id }: { id: string }) {
         }
       >
         <p className="font-heading text-[14px] text-gray-dk">
-          Cet article sera marqué comme rejeté et ne sera pas publié sur WordPress. Cette action est irréversible.
+          Cet article sera marqué comme rejeté et envoyé à la corbeille, restaurable pendant 1h avant purge définitive.
         </p>
       </Modal>
-
-      {/* Modale confirmation suppression réelle (irréversible, distincte de
-          l'archivage qui passe par la corbeille et reste restaurable 72h) */}
-      <ConfirmDeleteModal
-        open={confirmDelete}
-        onClose={() => setConfirmDelete(false)}
-        onConfirm={() => deleteArticle(undefined as unknown as void)}
-        loading={deleting}
-      />
 
       {/* Overlay d'édition manuelle (nouveau périmètre produit) */}
       <ManualEditOverlay

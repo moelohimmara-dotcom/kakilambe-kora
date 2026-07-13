@@ -12,9 +12,12 @@ import { trashApi, TrashedItem } from '@/lib/trashApi'
 import { formatRelative } from '@/lib/utils'
 
 // Écran corbeille — nouveau périmètre produit (aucune fonctionnalité
-// équivalente dans le CDC existant). Les articles "archivés" ici ne sont pas
-// réellement modifiés côté backend (voir TODO dans lib/trashApi.ts) : seule
-// la purge (définitive) appelle le vrai DELETE existant.
+// équivalente dans le CDC existant). Contient les articles rejetés (purge
+// 1h) et supprimés (purge 72h) en attente de purge — l'archivage persistant
+// est un concept séparé, voir /articles → onglet "Archivés". Les entrées
+// ici ne sont pas réellement modifiées côté backend au moment de l'envoi
+// (voir TODO dans lib/trashApi.ts) : seule la purge (définitive) appelle le
+// vrai DELETE existant.
 export function TrashScreen() {
   const { show } = useToast()
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
@@ -58,7 +61,7 @@ export function TrashScreen() {
       <div className="mb-8">
         <h1 className="font-heading font-bold text-2xl text-anthracite">Corbeille</h1>
         <p className="font-heading text-[13px] text-gray-dk mt-0.5">
-          Les articles archivés sont conservés 72h avant suppression automatique.
+          Articles rejetés (1h) et supprimés (72h) avant purge automatique.
         </p>
       </div>
 
@@ -70,7 +73,7 @@ export function TrashScreen() {
             <span className="font-heading text-2xl text-gray-med">🗑</span>
           </div>
           <p className="font-heading font-semibold text-[15px] text-anthracite">Corbeille vide</p>
-          <p className="font-heading text-[13px] text-gray-dk">Les articles archivés apparaîtront ici.</p>
+          <p className="font-heading text-[13px] text-gray-dk">Les articles rejetés ou supprimés apparaîtront ici.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -106,8 +109,12 @@ function TrashCard({
   onRestore: () => void
   onPurge: () => void
 }) {
-  const msLeft = new Date(item.purge_at).getTime() - Date.now()
-  const hoursLeft = Math.max(0, Math.ceil(msLeft / (60 * 60 * 1000)))
+  const msLeft = Math.max(0, new Date(item.purge_at).getTime() - Date.now())
+  const isImminent = msLeft < 60 * 60 * 1000
+  const purgeLabel = isImminent
+    ? `Purge dans ${Math.max(1, Math.round(msLeft / 60000))} min — imminent`
+    : `Purge dans ${Math.ceil(msLeft / (60 * 60 * 1000))}h`
+  const reasonLabel = item.reason === 'rejected' ? 'Rejeté' : 'Supprimé'
 
   return (
     <Card padding="sm" className="flex flex-col overflow-hidden h-full opacity-90">
@@ -122,16 +129,21 @@ function TrashCard({
       </div>
 
       <div className="flex flex-col flex-1">
-        <h3 className="font-heading font-semibold text-[14px] text-anthracite line-clamp-2 mb-1.5">
-          {item.article.titre}
-        </h3>
+        <div className="flex items-center gap-2 mb-1.5">
+          <h3 className="font-heading font-semibold text-[14px] text-anthracite line-clamp-2 flex-1">
+            {item.article.titre}
+          </h3>
+          <Badge variant={item.reason === 'rejected' ? 'danger' : 'gray'} className="shrink-0">
+            {reasonLabel}
+          </Badge>
+        </div>
         <span className="font-heading text-[11px] text-gray-med mb-3">
-          {item.article.source_nom ?? '—'} · archivé {formatRelative(item.archived_at)}
+          {item.article.source_nom ?? '—'} · {reasonLabel.toLowerCase()} {formatRelative(item.trashed_at)}
         </span>
 
         <div className="mt-auto flex items-center justify-between gap-2 pt-2 border-t border-gray-pale">
-          <Badge variant={hoursLeft <= 12 ? 'danger' : 'gray'}>
-            Purge dans {hoursLeft}h
+          <Badge variant={isImminent ? 'danger' : 'gray'}>
+            {purgeLabel}
           </Badge>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" disabled={disabled} onClick={onRestore}>

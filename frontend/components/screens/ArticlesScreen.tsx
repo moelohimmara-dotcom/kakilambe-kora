@@ -2,26 +2,32 @@
 
 import { useState, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Trash2, Archive } from 'lucide-react'
+import { Trash2, Archive, ArchiveRestore } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
-import { ConfirmDeleteModal } from '@/components/ui/ConfirmDeleteModal'
 import { useAsync, useMutation } from '@/lib/hooks'
 import { useToast } from '@/lib/contexts/ToastContext'
 import { articleApi } from '@/lib/api'
 import { trashApi } from '@/lib/trashApi'
+import { archiveApi } from '@/lib/archiveApi'
 import { gamificationApi } from '@/lib/gamificationApi'
 import { formatRelative, statusLabel, statusVariant } from '@/lib/utils'
 import type { Article, ArticleStatus } from '@/lib/types'
 
-const STATUS_TABS: { label: string; value: ArticleStatus | '' }[] = [
+// 'ARCHIVED' est un pseudo-statut front-end (voir lib/archiveApi.ts) — le
+// backend n'a pas de colonne ARCHIVED, ce filtre recoupe côté client la
+// liste complète avec le suivi local des ids archivés.
+type TabValue = ArticleStatus | '' | 'ARCHIVED'
+
+const STATUS_TABS: { label: string; value: TabValue }[] = [
   { label: 'Tous', value: '' },
   { label: 'En attente', value: 'PENDING_REVIEW' },
   { label: 'Publiés', value: 'PUBLISHED' },
   { label: 'Brouillons', value: 'DRAFT' },
   { label: 'Rejetés', value: 'REJECTED' },
+  { label: 'Archivés', value: 'ARCHIVED' },
 ]
 
 const VALID_STATUSES = new Set(STATUS_TABS.map(t => t.value))
@@ -30,16 +36,16 @@ export function ArticlesScreen() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const statusFromUrl = searchParams.get('status') ?? ''
-  const [activeStatus, setActiveStatus] = useState<ArticleStatus | ''>(
-    VALID_STATUSES.has(statusFromUrl as ArticleStatus) ? (statusFromUrl as ArticleStatus) : ''
+  const [activeStatus, setActiveStatus] = useState<TabValue>(
+    VALID_STATUSES.has(statusFromUrl as TabValue) ? (statusFromUrl as TabValue) : ''
   )
   const [evaporating, setEvaporating] = useState<string | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [navigatingId, setNavigatingId] = useState<string | null>(null)
-  // Suivi local des articles envoyés à la corbeille (nouveau périmètre
-  // produit) — le backend n'a aucune notion d'archivage (voir lib/trashApi.ts),
-  // donc ce filtrage se fait entièrement côté front à partir du store local.
-  const [archivedIds, setArchivedIds] = useState<Set<string>>(() => trashApi.archivedIds())
+  // Suivi local — archivage persistant (lib/archiveApi.ts) et corbeille
+  // (lib/trashApi.ts, rejetés + supprimés en attente de purge) sont deux
+  // stores distincts, le backend n'ayant ni l'un ni l'autre en base.
+  const [archivedIds, setArchivedIds] = useState<Set<string>>(() => archiveApi.archivedIds())
+  const [trashedIds, setTrashedIds] = useState<Set<string>>(() => trashApi.trashedIds())
   const { show } = useToast()
 
   // Transition de sortie (fade + léger scale, CSS natif) avant navigation
@@ -51,11 +57,14 @@ export function ArticlesScreen() {
   }
 
   const fetchArticles = useCallback(
-    () => articleApi.list(activeStatus || undefined),
+    () => articleApi.list(activeStatus === 'ARCHIVED' ? undefined : (activeStatus || undefined)),
     [activeStatus]
   )
   const { data, loading, refetch } = useAsync(fetchArticles, [activeStatus])
-  const articles = ((data as { items: Article[] } | null)?.items ?? []).filter(a => !archivedIds.has(a.id))
+  const rawArticles = (data as { items: Article[] } | null)?.items ?? []
+  const articles = activeStatus === 'ARCHIVED'
+    ? rawArticles.filter(a => archivedIds.has(a.id))
+    : rawArticles.filter(a => !archivedIds.has(a.id) && !trashedIds.has(a.id))
 
   const { mutate: approve, loading: approving } = useMutation(async (id: string) => {
     setEvaporating(id)
@@ -69,33 +78,49 @@ export function ArticlesScreen() {
     return result
   })
 
-  const { mutate: reject } = useMutation(async (id: string) => {
-    setEvaporating(id)
+  // Rejeter change le vrai statut (REJECTED, comme avant) ET envoie
+  // l'article dans la corbeille avec une rétention courte (1h — voir
+  // wireframes fournis), plutôt que de le laisser simplement rejeté en
+  // place sans suite.
+  const { mutate: reject } = useMutation(async (article: Article) => {
+    setEvaporating(article.id)
     await new Promise(r => setTimeout(r, 480))
-    await articleApi.reject(id)
+    await articleApi.reject(article.id)
+    await trashApi.sendToTrash(article, 'rejected')
+    setTrashedIds(trashApi.trashedIds())
     await refetch()
     setEvaporating(null)
-    show('Article rejeté', 'warning')
+    show('Article rejeté — envoyé à la corbeille (purge dans 1h)', 'warning')
   })
 
+  // Archivage persistant — distinct de la corbeille, aucune purge, filtrable
+  // sous l'onglet "Archivés" (voir lib/archiveApi.ts).
   const { mutate: archive } = useMutation(async (article: Article) => {
     setEvaporating(article.id)
     await new Promise(r => setTimeout(r, 480))
-    await trashApi.archiveArticle(article)
-    setArchivedIds(trashApi.archivedIds())
+    await archiveApi.archiveArticle(article.id)
+    setArchivedIds(archiveApi.archivedIds())
     setEvaporating(null)
-    show('Article envoyé à la corbeille — restaurable pendant 72h', 'warning')
+    show('Article archivé', 'success')
   })
 
-  const { mutate: deleteArticle, loading: deleting } = useMutation(async (id: string) => {
-    setEvaporating(id)
+  const { mutate: unarchive } = useMutation(async (id: string) => {
+    await archiveApi.unarchiveArticle(id)
+    setArchivedIds(archiveApi.archivedIds())
+    show('Article désarchivé', 'success')
+  })
+
+  // Supprimer envoie désormais à la corbeille (72h, restaurable) au lieu
+  // d'un DELETE réel instantané — la suppression réelle n'a lieu qu'à la
+  // purge (auto ou manuelle depuis /corbeille).
+  const { mutate: deleteArticle } = useMutation(async (article: Article) => {
+    setEvaporating(article.id)
     await new Promise(r => setTimeout(r, 480))
-    await articleApi.delete(id)
-    setDeleteTarget(null)
+    await trashApi.sendToTrash(article, 'deleted')
+    setTrashedIds(trashApi.trashedIds())
     await refetch()
     setEvaporating(null)
-    show('Article supprimé définitivement', 'warning')
-    router.refresh()
+    show('Article envoyé à la corbeille (purge dans 72h)', 'warning')
   })
 
   return (
@@ -159,11 +184,12 @@ export function ArticlesScreen() {
             >
               <ArticleCard
                 article={article}
+                isArchivedView={activeStatus === 'ARCHIVED'}
                 onOpen={() => openArticle(article.id)}
                 onApprove={() => approve(article.id)}
-                onReject={() => reject(article.id)}
-                onArchive={() => archive(article)}
-                onDelete={() => setDeleteTarget(article.id)}
+                onReject={() => reject(article)}
+                onArchive={() => activeStatus === 'ARCHIVED' ? unarchive(article.id) : archive(article)}
+                onDelete={() => deleteArticle(article)}
                 approving={approving && evaporating === article.id}
               />
             </div>
@@ -171,13 +197,6 @@ export function ArticlesScreen() {
         </div>
       )}
       </div>
-
-      <ConfirmDeleteModal
-        open={deleteTarget !== null}
-        onClose={() => setDeleteTarget(null)}
-        onConfirm={() => deleteTarget && deleteArticle(deleteTarget)}
-        loading={deleting}
-      />
     </div>
   )
 }
@@ -188,9 +207,10 @@ export function ArticlesScreen() {
 // propagation pour ne pas déclencher l'ouverture en même temps.
 
 function ArticleCard({
-  article, onOpen, onApprove, onReject, onArchive, onDelete, approving,
+  article, isArchivedView, onOpen, onApprove, onReject, onArchive, onDelete, approving,
 }: {
   article: Article
+  isArchivedView: boolean
   onOpen: () => void
   onApprove: () => void
   onReject: () => void
@@ -282,20 +302,22 @@ function ArticleCard({
           <div className="flex items-center shrink-0">
             <button
               onClick={stop(onArchive)}
-              title="Archiver"
+              title={isArchivedView ? 'Désarchiver' : 'Archiver'}
               className="w-11 h-11 flex items-center justify-center text-gray-med hover:text-anthracite transition-colors rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange"
-              aria-label={`Archiver : ${article.titre}`}
+              aria-label={`${isArchivedView ? 'Désarchiver' : 'Archiver'} : ${article.titre}`}
             >
-              <Archive size={18} aria-hidden="true" />
+              {isArchivedView ? <ArchiveRestore size={18} aria-hidden="true" /> : <Archive size={18} aria-hidden="true" />}
             </button>
-            <button
-              onClick={stop(onDelete)}
-              title="Supprimer"
-              className="w-11 h-11 flex items-center justify-center text-gray-med hover:text-danger transition-colors rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger"
-              aria-label={`Supprimer : ${article.titre}`}
-            >
-              <Trash2 size={18} aria-hidden="true" />
-            </button>
+            {!isArchivedView && (
+              <button
+                onClick={stop(onDelete)}
+                title="Supprimer"
+                className="w-11 h-11 flex items-center justify-center text-gray-med hover:text-danger transition-colors rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger"
+                aria-label={`Supprimer : ${article.titre}`}
+              >
+                <Trash2 size={18} aria-hidden="true" />
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -303,14 +325,15 @@ function ArticleCard({
   )
 }
 
-function EmptyState({ status }: { status: ArticleStatus | '' }) {
+function EmptyState({ status }: { status: TabValue }) {
+  const label = status === 'ARCHIVED' ? 'Archivés' : status ? statusLabel(status as ArticleStatus) : null
   return (
     <div className="empty-state">
       <div className="w-16 h-16 rounded-xl bg-gray-pale flex items-center justify-center">
         <span className="font-heading text-2xl text-gray-med">□</span>
       </div>
       <p className="font-heading font-semibold text-[15px] text-anthracite">
-        {status ? `Aucun article "${statusLabel(status as ArticleStatus)}"` : 'Aucun article'}
+        {label ? `Aucun article "${label}"` : 'Aucun article'}
       </p>
       <p className="font-heading text-[13px] text-gray-dk">
         🤖 KORA travaille, revenez bientôt.

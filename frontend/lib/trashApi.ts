@@ -1,29 +1,41 @@
 // Couche stub — Corbeille (nouveau périmètre produit, validé explicitement).
+// D'après les wireframes fournis, la corbeille contient deux catégories
+// d'articles, chacune avec sa propre rétention avant purge automatique :
+//   - 'deleted'  → 72h (action "Supprimer")
+//   - 'rejected' → 1h  (action "Rejeter")
+// L'archivage ("Archiver") est un concept SÉPARÉ et persistant (voir
+// lib/archiveApi.ts) — les articles archivés n'apparaissent jamais ici,
+// seulement sous l'onglet "Archivés" de /articles.
 //
-// TODO backend : il n'existe aujourd'hui aucune colonne `ARCHIVED` ni
-// `archived_at` sur la table `articles`, et `DELETE /api/articles/{id}`
-// est un vrai DELETE SQL immédiat (voir backend/api/article_routes.py:296).
-// Tant que le backend n'expose pas un vrai statut ARCHIVED + une purge
-// planifiée, "Archiver" est une vue purement front-end : l'article réel
-// n'est ni modifié ni supprimé en base, seul son id est masqué de la liste
-// /articles et suivi ici (localStorage). "Purger" en revanche appelle le
-// vrai endpoint DELETE existant — action réellement destructive.
-//
-// Endpoints réels à créer plus tard : POST /api/articles/{id}/archive,
-// POST /api/articles/{id}/restore, avec un job planifié de purge à 72h.
+// TODO backend : aucune colonne `rejected_at`/`deleted_at` n'existe sur
+// `articles`, et DELETE /api/articles/{id} est un vrai DELETE SQL immédiat
+// (voir backend/api/article_routes.py:296). Tant que le backend n'expose
+// pas ces champs + une purge planifiée, cette rétention est un concept
+// purement front-end (localStorage) : le statut réel de l'article
+// (PENDING_REVIEW/REJECTED/etc.) n'est modifié que par les vrais appels
+// API déjà existants (articleApi.reject/patch) ; "Supprimer" ne modifie
+// RIEN côté backend tant que la purge n'a pas eu lieu.
+// Endpoints réels à créer plus tard : POST /api/articles/{id}/trash,
+// POST /api/articles/{id}/restore, job planifié de purge.
 
 import type { Article } from './types'
 import { articleApi } from './api'
 
+export type TrashReason = 'deleted' | 'rejected'
+
 export interface TrashedItem {
   id: string
+  reason: TrashReason
   article: Pick<Article, 'id' | 'titre' | 'chapeau' | 'image_url' | 'status' | 'source_nom' | 'created_at'>
-  archived_at: string
+  trashed_at: string
   purge_at: string
 }
 
-const STORAGE_KEY = 'kora_trash_v1'
-const RETENTION_MS = 72 * 60 * 60 * 1000
+const STORAGE_KEY = 'kora_trash_v2'
+const RETENTION_MS: Record<TrashReason, number> = {
+  deleted: 72 * 60 * 60 * 1000,
+  rejected: 1 * 60 * 60 * 1000,
+}
 
 function readStore(): TrashedItem[] {
   if (typeof window === 'undefined') return []
@@ -41,14 +53,15 @@ function writeStore(items: TrashedItem[]) {
 }
 
 export const trashApi = {
-  archivedIds(): Set<string> {
+  trashedIds(): Set<string> {
     return new Set(readStore().map(t => t.id))
   },
 
-  async archiveArticle(article: Article): Promise<void> {
+  async sendToTrash(article: Article, reason: TrashReason): Promise<void> {
     const now = new Date()
     const item: TrashedItem = {
       id: article.id,
+      reason,
       article: {
         id: article.id,
         titre: article.titre,
@@ -58,15 +71,15 @@ export const trashApi = {
         source_nom: article.source_nom,
         created_at: article.created_at,
       },
-      archived_at: now.toISOString(),
-      purge_at: new Date(now.getTime() + RETENTION_MS).toISOString(),
+      trashed_at: now.toISOString(),
+      purge_at: new Date(now.getTime() + RETENTION_MS[reason]).toISOString(),
     }
     const items = readStore().filter(t => t.id !== article.id)
     writeStore([item, ...items])
   },
 
-  // Auto-purge les entrées dont la rétention de 72h est écoulée (appel réel
-  // au DELETE existant) avant de renvoyer la liste active.
+  // Auto-purge les entrées dont la rétention est écoulée (appel réel au
+  // DELETE existant) avant de renvoyer la liste active.
   async listTrashed(): Promise<TrashedItem[]> {
     const items = readStore()
     const now = Date.now()
@@ -81,9 +94,15 @@ export const trashApi = {
     return active
   },
 
-  // Retire l'article de la corbeille — il redevient visible normalement sur
-  // /articles (son statut réel n'a jamais changé côté backend).
+  // Retire l'article de la corbeille. Pour un article rejeté, le vrai statut
+  // backend est remis à PENDING_REVIEW (redonne une chance d'être revalidé) ;
+  // pour un article "supprimé", son statut réel n'a jamais changé (le DELETE
+  // n'a lieu qu'à la purge), il redevient simplement visible normalement.
   async restoreItem(id: string): Promise<void> {
+    const item = readStore().find(t => t.id === id)
+    if (item?.reason === 'rejected') {
+      await articleApi.patch(id, { status: 'PENDING_REVIEW' }).catch(() => {})
+    }
     writeStore(readStore().filter(t => t.id !== id))
   },
 
