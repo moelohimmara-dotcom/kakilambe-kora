@@ -111,7 +111,7 @@ export default function LoginPage() {
 
             <Button
               type="submit"
-              variant="primary"
+              variant="confirm"
               size="lg"
               loading={loading}
               className="w-full mt-2"

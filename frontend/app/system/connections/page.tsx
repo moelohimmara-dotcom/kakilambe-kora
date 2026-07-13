@@ -68,6 +68,24 @@ const INITIAL_SERVICES: Service[] = [
     detail: '',
   },
   {
+    id: 'cerebras',
+    label: 'Cerebras API',
+    description: 'LLM fallback #3 — chaîne de secours',
+    endpoint: '/health/providers/cerebras',
+    status: 'unknown',
+    latency_ms: null,
+    detail: '',
+  },
+  {
+    id: 'openrouter',
+    label: 'OpenRouter API',
+    description: 'LLM fallback #4 — dernier recours',
+    endpoint: '/health/providers/openrouter',
+    status: 'unknown',
+    latency_ms: null,
+    detail: '',
+  },
+  {
     id: 'tavily',
     label: 'Tavily Search',
     description: 'Moteur de recherche actualités africaines',
@@ -77,10 +95,14 @@ const INITIAL_SERVICES: Service[] = [
     detail: '',
   },
   {
-    id: 'fal',
-    label: 'Fal.ai (Flux)',
-    description: 'Génération d\'images d\'illustration',
-    endpoint: '/health/fal',
+    id: 'image_gen',
+    label: 'Pollinations.ai',
+    // IMAGE_GEN_API_KEY/IMAGE_GEN_PROVIDER="fal" sont des champs morts —
+    // integrations/image_gen_client.py utilise pollinations.ai en dur, sans
+    // clé (voir docs-reference/KORA_AGENT_SPEC.md). Cette carte affichait
+    // auparavant "Fal.ai" et appelait /health/fal, un endpoint inexistant.
+    description: 'Génération d\'images d\'illustration (gratuit, sans clé API)',
+    endpoint: '/health/image_gen',
     status: 'unknown',
     latency_ms: null,
     detail: '',

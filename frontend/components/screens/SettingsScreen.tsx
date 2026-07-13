@@ -199,7 +199,7 @@ function WordPressTab() {
           {testResult === 'ok' && <Badge variant="sage" dot>Connexion OK</Badge>}
           {testResult === 'fail' && <Badge variant="danger">Connexion échouée</Badge>}
           <div className="flex-1" />
-          <Button variant="primary" size="sm" loading={saving} onClick={() => save(undefined as unknown as void)}>
+          <Button variant="confirm" size="sm" loading={saving} onClick={() => save(undefined as unknown as void)}>
             Sauvegarder
           </Button>
         </div>
@@ -468,7 +468,7 @@ function PromptsTab() {
                 />
               </div>
               <div className="flex gap-2">
-                <Button variant="primary" size="sm" loading={saving} onClick={() => save(prompt.id)}>
+                <Button variant="confirm" size="sm" loading={saving} onClick={() => save(prompt.id)}>
                   Sauvegarder
                 </Button>
                 <Button variant="ghost" size="sm" onClick={() => setEditing(null)}>Annuler</Button>

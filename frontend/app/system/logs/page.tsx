@@ -45,23 +45,9 @@ function parseLine(line: string): LogEntry {
   }
 }
 
-const DEMO_LINES = [
-  '{"ts":"2026-06-29T06:00:00Z","level":"INFO","node":"scheduler","message":"Démarrage cycle matinal"}',
-  '{"ts":"2026-06-29T06:00:01Z","level":"INFO","node":"scraper","message":"Scraping 12 sources RSS"}',
-  '{"ts":"2026-06-29T06:00:04Z","level":"OK","node":"selector","message":"5 articles sélectionnés pour rédaction"}',
-  '{"ts":"2026-06-29T06:00:05Z","level":"INFO","node":"writer","message":"Rédaction article 1/5 — groq/llama-3.3-70b"}',
-  '{"ts":"2026-06-29T06:00:12Z","level":"WARN","node":"llm_router","message":"Groq rate-limit — fallback sur gemini"}',
-  '{"ts":"2026-06-29T06:00:13Z","level":"INFO","node":"writer","message":"Rédaction article 2/5 — gemini/gemini-2.0-flash"}',
-  '{"ts":"2026-06-29T06:00:18Z","level":"OK","node":"writer","message":"Article 2/5 rédigé (847 mots)"}',
-  '{"ts":"2026-06-29T06:00:19Z","level":"INFO","node":"illustrator","message":"Génération image via fal.ai/flux"}',
-  '{"ts":"2026-06-29T06:00:25Z","level":"OK","node":"illustrator","message":"Image générée — upload WP media"}',
-  '{"ts":"2026-06-29T06:00:26Z","level":"INFO","node":"publisher","message":"HITL — en attente validation humaine"}',
-  '{"ts":"2026-06-29T06:01:45Z","level":"OK","node":"publisher","message":"Article approuvé — publication WordPress"}',
-  '{"ts":"2026-06-29T06:01:47Z","level":"OK","node":"publisher","message":"Publié : https://kakilambe.com/?p=4821"}',
-]
-
 export default function LogsPage() {
-  const [lines, setLines]     = useState<LogEntry[]>(DEMO_LINES.map(parseLine))
+  const [lines, setLines]     = useState<LogEntry[]>([])
+  const [connected, setConnected] = useState(false)
   const [paused, setPaused]   = useState(false)
   const [filter, setFilter]   = useState<string>('ALL')
   const [search, setSearch]   = useState('')
@@ -69,8 +55,15 @@ export default function LogsPage() {
   const pausedRef             = useRef(paused)
   pausedRef.current           = paused
 
+  // TODO backend : /stream/logs n'existe pas — seul /api/agent/stream existe,
+  // et il exige un cycle_id (suivi d'un cycle précis, pas un flux global tous
+  // cycles confondus). Tant qu'un vrai endpoint de flux global n'existe pas,
+  // cet écran affiche honnêtement "non connecté" plutôt que des lignes de
+  // démonstration fictives présentées comme des logs réels.
   useEffect(() => {
     const es = new EventSource(`${BASE_URL}/stream/logs`)
+    es.onopen = () => setConnected(true)
+    es.onerror = () => setConnected(false)
     es.onmessage = (e) => {
       if (pausedRef.current) return
       const entry = parseLine(e.data)
@@ -95,7 +88,9 @@ export default function LogsPage() {
       <div className="flex items-center justify-between mb-4 shrink-0">
         <div>
           <h1 className="font-mono font-bold text-xl text-white">Terminal Logs</h1>
-          <p className="font-mono text-[12px] mt-0.5" style={{ color: SYS_MUTED }}>Flux SSE en temps réel</p>
+          <p className="font-mono text-[12px] mt-0.5" style={{ color: connected ? '#48bb78' : '#fc8181' }}>
+            {connected ? '● Flux SSE connecté' : '○ Non connecté — endpoint /stream/logs absent côté backend'}
+          </p>
         </div>
         <button
           onClick={() => setPaused(p => !p)}
@@ -151,8 +146,8 @@ export default function LogsPage() {
         aria-label="Logs terminal"
       >
         {visible.length === 0 && (
-          <div className="flex items-center justify-center h-32" style={{ color: SYS_MUTED }}>
-            Aucun log à afficher
+          <div className="flex items-center justify-center h-32 text-center px-6" style={{ color: SYS_MUTED }}>
+            {connected ? 'Aucun log à afficher' : "En attente de connexion — aucun endpoint de flux global n'est encore branché côté backend."}
           </div>
         )}
         {visible.map((l, i) => (

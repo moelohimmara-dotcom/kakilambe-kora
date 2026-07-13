@@ -181,7 +181,7 @@ export function ArticleEditorScreen({ id }: { id: string }) {
               ↻ Visuel v{versions.visual}
             </Button>
             <Button
-              variant="primary"
+              variant="confirm"
               size="sm"
               loading={approving}
               disabled={anyActionInFlight && !approving}
@@ -343,7 +343,7 @@ export function ArticleEditorScreen({ id }: { id: string }) {
           {article.status === 'PENDING_REVIEW' && (
             <div className="space-y-2">
               <Button
-                variant="primary"
+                variant="confirm"
                 size="lg"
                 className="w-full"
                 loading={approving}

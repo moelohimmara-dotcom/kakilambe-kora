@@ -9,6 +9,9 @@ interface ToggleProps {
   description?: string
   disabled?: boolean
   size?: 'sm' | 'md'
+  // 'lavender' réservé exclusivement au toggle HITL de /agent (accent de
+  // gamification/HITL d'après les wireframes) — ne jamais l'utiliser ailleurs.
+  color?: 'orange' | 'lavender'
 }
 
 export function Toggle({
@@ -18,6 +21,7 @@ export function Toggle({
   description,
   disabled = false,
   size = 'md',
+  color = 'orange',
 }: ToggleProps) {
   const id = useId()
 
@@ -46,7 +50,7 @@ export function Toggle({
           `transition-colors duration-200 cursor-pointer ` +
           `focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange focus-visible:ring-offset-2 ` +
           `disabled:opacity-40 disabled:cursor-not-allowed ` +
-          `${trackCls} ${checked ? 'bg-orange' : 'bg-gray-light'}`
+          `${trackCls} ${checked ? (color === 'lavender' ? 'bg-lavender' : 'bg-orange') : 'bg-gray-light'}`
         }
       >
         <span className={`${thumbBase} ${checked ? thumbOn : ''}`} aria-hidden="true" />

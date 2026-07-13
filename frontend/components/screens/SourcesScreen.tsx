@@ -104,7 +104,7 @@ export function SourcesScreen() {
         footer={
           <>
             <Button variant="ghost" size="sm" onClick={() => setShowAdd(false)}>Annuler</Button>
-            <Button variant="primary" size="sm" loading={adding} onClick={() => addSource(undefined as unknown as void)}>
+            <Button variant="confirm" size="sm" loading={adding} onClick={() => addSource(undefined as unknown as void)}>
               Ajouter
             </Button>
           </>
@@ -216,7 +216,7 @@ function SourceCard({
       ) : (
         <button
           onClick={() => setConfirmDelete(true)}
-          className="w-8 h-8 flex items-center justify-center rounded-md text-gray-med hover:text-danger hover:bg-danger/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange"
+          className="w-11 h-11 flex items-center justify-center rounded-md text-gray-med hover:text-danger hover:bg-danger/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange"
           aria-label={`Supprimer ${source.name}`}
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">

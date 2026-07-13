@@ -1,7 +1,7 @@
 import { forwardRef, ButtonHTMLAttributes, AnchorHTMLAttributes, ReactNode } from 'react'
 import Link from 'next/link'
 
-type Variant = 'primary' | 'ghost' | 'danger' | 'outline'
+type Variant = 'primary' | 'confirm' | 'ghost' | 'danger' | 'outline'
 type Size    = 'sm' | 'md' | 'lg'
 
 const base =
@@ -11,9 +11,16 @@ const base =
   'disabled:opacity-40 disabled:pointer-events-none select-none'
 
 const variants: Record<Variant, string> = {
+  // Réservé aux actions positives principales (Lancer un cycle...) — cf.
+  // wireframes fournis, où seul ce type d'action reste orange.
   primary:
     'bg-orange text-white border-orange hover:bg-orange-dk hover:border-orange-dk ' +
     'hover:-translate-y-px hover:shadow-[0_4px_12px_rgba(217,119,87,.3)]',
+  // Confirmation neutre (Se connecter, Suivant, Enregistrer, Approuver et
+  // publier) — noir charbon d'après les wireframes, distinct de "primary".
+  confirm:
+    'bg-anthracite text-white border-anthracite hover:bg-[#2c2a26] hover:border-[#2c2a26] ' +
+    'hover:-translate-y-px hover:shadow-[0_4px_12px_rgba(20,20,19,.25)]',
   ghost:
     'bg-transparent text-gray-dk border-gray-light hover:bg-gray-pale hover:-translate-y-px',
   danger:

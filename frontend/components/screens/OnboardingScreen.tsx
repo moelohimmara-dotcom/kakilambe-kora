@@ -113,7 +113,7 @@ export function OnboardingScreen() {
                 </li>
               ))}
             </ul>
-            <Button variant="primary" size="lg" className="w-full" onClick={() => setStep('wordpress')}>
+            <Button variant="confirm" size="lg" className="w-full" onClick={() => setStep('wordpress')}>
               Commencer la configuration
             </Button>
           </Card>
@@ -148,7 +148,7 @@ export function OnboardingScreen() {
             </div>
             <div className="flex gap-3">
               <Button variant="ghost" size="md" onClick={() => setStep('welcome')}>← Retour</Button>
-              <Button variant="primary" size="md" className="flex-1" onClick={() => setStep('sources')}>
+              <Button variant="confirm" size="md" className="flex-1" onClick={() => setStep('sources')}>
                 Continuer →
               </Button>
             </div>
@@ -216,7 +216,7 @@ export function OnboardingScreen() {
             </div>
             <div className="flex gap-3">
               <Button variant="ghost" size="md" onClick={() => setStep('wordpress')}>← Retour</Button>
-              <Button variant="primary" size="md" className="flex-1" loading={saving} onClick={finishSetup}>
+              <Button variant="confirm" size="md" className="flex-1" loading={saving} onClick={finishSetup}>
                 Terminer la configuration
               </Button>
             </div>
@@ -233,7 +233,7 @@ export function OnboardingScreen() {
             <p className="font-body text-[14px] text-gray-dk mb-8">
               KORA est prêt à rédiger des articles pour kakilambe.com. Lancez votre premier cycle depuis le tableau de bord.
             </p>
-            <Button variant="primary" size="lg" href="/" className="w-full">
+            <Button variant="confirm" size="lg" href="/" className="w-full">
               Accéder au tableau de bord
             </Button>
           </Card>

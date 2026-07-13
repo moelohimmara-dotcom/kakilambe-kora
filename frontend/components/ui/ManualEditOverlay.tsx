@@ -92,7 +92,7 @@ export function ManualEditOverlay({ open, onClose, article, onSave, saving }: Ma
 
       <div className="flex items-center justify-end gap-3 mt-5 pt-4 border-t border-gray-pale">
         <Button variant="ghost" size="sm" disabled={saving} onClick={onClose}>Annuler</Button>
-        <Button variant="primary" size="sm" loading={saving} onClick={handleSave}>
+        <Button variant="confirm" size="sm" loading={saving} onClick={handleSave}>
           Enregistrer
         </Button>
       </div>

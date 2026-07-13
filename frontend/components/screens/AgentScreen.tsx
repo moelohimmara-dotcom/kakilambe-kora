@@ -360,6 +360,7 @@ export function AgentScreen() {
               checked={true}
               onChange={() => {}}
               disabled
+              color="lavender"
               label="Mode semi-automatique"
               description="Verrouillé — validation humaine obligatoire avant toute publication"
             />
