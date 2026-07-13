@@ -23,9 +23,7 @@ backend/*.egg-info/
 # ── Node / Next.js ─────────────────────────────────────────────────────────────
 node_modules/
 frontend/node_modules/
-guineepress-intelligence/node_modules/
 frontend/.next/
-guineepress-intelligence/.next/
 frontend/out/
 .vercel
 
@@ -40,4 +38,3 @@ Thumbs.db
 
 # ── Claude Code session ────────────────────────────────────────────────────────
 .claude/
-guineepress-intelligence/
