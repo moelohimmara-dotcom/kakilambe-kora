@@ -7,6 +7,8 @@ import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
 import { GamificationBar } from '@/components/ui/GamificationBar'
+import { CycleLaunchOverlay } from '@/components/ui/CycleLaunchOverlay'
+import { useLaunchCycle } from '@/lib/useLaunchCycle'
 import { useAsync, useInterval } from '@/lib/hooks'
 import { articleApi, agentApi } from '@/lib/api'
 import { formatRelative, statusLabel, statusVariant } from '@/lib/utils'
@@ -29,6 +31,14 @@ interface DashboardData {
 }
 
 export function DashboardScreen() {
+  // Même hook que /agent (CDC §3.4.1 : "même flux, pas une implémentation
+  // dupliquée divergente") — le bouton "Lancer un cycle" déclenche
+  // désormais réellement un cycle depuis le Dashboard au lieu de se
+  // contenter de naviguer vers /agent. Le cycle_id est partagé via
+  // localStorage : si l'utilisateur navigue vers /agent pendant l'attente,
+  // cet écran reprend le suivi du même cycle sans le relancer.
+  const { isBusy, running, isRunning, runCycle, cancelCycle, cancelling } = useLaunchCycle()
+
   const fetchDashboard = useCallback(async (): Promise<DashboardData> => {
     const [pendingRes, recentRes, cycleRes] = await Promise.allSettled([
       articleApi.list('PENDING_REVIEW'),
@@ -69,8 +79,14 @@ export function DashboardScreen() {
         </div>
         <div className="flex items-center gap-3">
           <GamificationBar />
-          <Button href="/agent" variant="primary" size="sm">
-            Lancer un cycle
+          <Button
+            variant="primary"
+            size="sm"
+            loading={running}
+            disabled={isBusy}
+            onClick={() => runCycle(undefined as unknown as void)}
+          >
+            {isBusy ? 'Cycle en cours…' : 'Lancer un cycle'}
           </Button>
         </div>
       </div>
@@ -171,7 +187,7 @@ export function DashboardScreen() {
         {loading ? (
           <div className="flex justify-center py-12"><Spinner /></div>
         ) : recent.length === 0 ? (
-          <EmptyDashboard />
+          <EmptyDashboard onLaunch={() => runCycle(undefined as unknown as void)} running={running} isBusy={isBusy} />
         ) : (
           <div className="space-y-2">
             {recent.slice(0, 8).map(a => (
@@ -180,6 +196,13 @@ export function DashboardScreen() {
           </div>
         )}
       </section>
+
+      <CycleLaunchOverlay
+        isBusy={isBusy}
+        isRunning={isRunning}
+        cancelling={cancelling}
+        onCancel={() => cancelCycle(undefined as unknown as void)}
+      />
     </div>
   )
 }
@@ -274,7 +297,7 @@ function ArticleRow({ article }: { article: Article }) {
   )
 }
 
-function EmptyDashboard() {
+function EmptyDashboard({ onLaunch, running, isBusy }: { onLaunch: () => void; running: boolean; isBusy: boolean }) {
   return (
     <div className="empty-state">
       <div className="w-16 h-16 rounded-xl bg-orange/10 flex items-center justify-center">
@@ -284,7 +307,7 @@ function EmptyDashboard() {
       <p className="font-heading text-[13px] text-gray-dk max-w-xs">
         Lancez votre premier cycle KORA pour collecter et rédiger des articles automatiquement.
       </p>
-      <Button href="/agent" variant="primary" size="md">
+      <Button variant="primary" size="md" loading={running} disabled={isBusy} onClick={onLaunch}>
         Lancer le premier cycle
       </Button>
     </div>
