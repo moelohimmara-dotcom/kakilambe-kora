@@ -6,6 +6,7 @@ import { Trash2, Archive, Check, X, Pencil } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
 import { Spinner } from '@/components/ui/Spinner'
+import { ProgressRing } from '@/components/ui/ProgressRing'
 import { useAsync, useMutation } from '@/lib/hooks'
 import { useToast } from '@/lib/contexts/ToastContext'
 import { articleApi } from '@/lib/api'
@@ -24,6 +25,10 @@ const STATUS_TABS: { label: string; value: ArticleStatus | '' }[] = [
 ]
 
 const VALID_STATUSES = new Set(STATUS_TABS.map(t => t.value))
+
+// Objectif cosmétique (gamification) — aucune cible réelle définie côté
+// produit à ce jour, valeur arbitraire raisonnable.
+const WEEKLY_REVIEW_GOAL = 20
 
 export function ArticlesScreen() {
   const router = useRouter()
@@ -65,6 +70,7 @@ export function ArticlesScreen() {
     await refetch()
     setEvaporating(null)
     show('Article approuvé et publié sur WordPress', 'success')
+    show('Article approuvé ! +10 XP', 'achievement')
     const milestone = await gamificationApi.checkNewMilestone().catch(() => null)
     if (milestone) show(milestone.label, 'achievement')
     return result
@@ -183,6 +189,20 @@ export function ArticlesScreen() {
           ))}
         </div>
       )}
+      </div>
+
+      {/* Gamification (nouveau périmètre) — objectif hebdomadaire de
+          révision, purement cosmétique (aucun objectif réel côté produit à
+          ce jour), calculé à partir des articles publiés cette semaine sur
+          la page actuellement chargée. */}
+      <div className="mt-6 inline-flex items-center gap-3 px-4 py-2.5 rounded-full border border-dashed border-lavender bg-lavender-pale">
+        <ProgressRing
+          value={rawArticles.filter(a => a.status === 'PUBLISHED' && a.published_at && Date.now() - new Date(a.published_at).getTime() < 7 * 24 * 60 * 60 * 1000).length}
+          max={WEEKLY_REVIEW_GOAL}
+          size={36}
+          label="Objectif hebdomadaire de révision"
+        />
+        <span className="font-heading text-[12px] text-anthracite">Objectif hebdo de révision</span>
       </div>
     </div>
   )

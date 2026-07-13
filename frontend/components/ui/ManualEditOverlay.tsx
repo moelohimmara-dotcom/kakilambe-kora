@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Modal } from './Modal'
 import { Button } from './Button'
+import { ProgressRing } from './ProgressRing'
 import type { Article } from '@/lib/types'
 
 // Overlay d'édition manuelle (nouveau périmètre produit, validé
@@ -59,8 +60,25 @@ export function ManualEditOverlay({ open, onClose, article, onSave, saving }: Ma
     await onSave(fields)
   }
 
+  // Gamification (nouveau périmètre) — complétude SEO cosmétique : titre,
+  // chapeau, corps substantiel et méta-description dans la limite affichée
+  // ailleurs (155 caractères) comptent chacun pour un quart.
+  const seoChecks = [
+    fields.titre.trim().length > 0,
+    fields.chapeau.trim().length > 0,
+    fields.corps.trim().length > 50,
+    fields.meta_description.trim().length > 0 && fields.meta_description.length <= 155,
+  ]
+  const seoScore = seoChecks.filter(Boolean).length
+
   return (
     <Modal open={open} onClose={onClose} title="Édition manuelle" size="lg">
+      <div className="flex items-center justify-end -mt-2 mb-3">
+        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-dashed border-lavender bg-lavender-pale">
+          <ProgressRing value={seoScore} max={seoChecks.length} size={28} label="Complétude SEO" />
+          <span className="font-heading text-[11px] text-anthracite">Complétude SEO</span>
+        </div>
+      </div>
       <div className="space-y-5 max-h-[65vh] overflow-y-auto pr-1">
         <MarkdownField
           label="Titre"

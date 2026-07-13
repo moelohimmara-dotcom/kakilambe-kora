@@ -7,8 +7,10 @@ import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Toggle } from '@/components/ui/Toggle'
 import { Spinner } from '@/components/ui/Spinner'
+import { StreakIndicator } from '@/components/ui/StreakIndicator'
 import { useToast } from '@/lib/contexts/ToastContext'
 import { agentApi, articleApi } from '@/lib/api'
+import { gamificationApi } from '@/lib/gamificationApi'
 import { useAsync, useMutation, useInterval } from '@/lib/hooks'
 
 interface CycleState {
@@ -79,6 +81,11 @@ export function AgentScreen() {
     [currentCycleId]
   )
   const { data: cycle, refetch: refetchStatus } = useAsync<CycleState>(fetchStatus)
+
+  // Gamification (nouveau périmètre) — indicateur discret, indépendant du
+  // polling de statut du cycle.
+  const fetchStreak = useCallback(() => gamificationApi.getStreak(), [])
+  const { data: streak } = useAsync(fetchStreak)
 
   // Reprise de session : si aucun cycle_id local mais que le backend en
   // retrouve un actif (via la DB — cf. _get_active_cycle_from_db), on
@@ -380,6 +387,8 @@ export function AgentScreen() {
                 <Badge variant="orange">HITL</Badge>
               )}
             </div>
+
+            {streak && streak.days > 0 && <StreakIndicator days={streak.days} />}
 
             {isBusy && (
               <Button

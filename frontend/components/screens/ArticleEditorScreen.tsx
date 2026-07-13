@@ -44,6 +44,7 @@ export function ArticleEditorScreen({ id }: { id: string }) {
     await new Promise(r => setTimeout(r, 480))
     await articleApi.approve(id)
     show('Article approuvé — publication en cours sur WordPress', 'success')
+    show('Article approuvé ! +10 XP', 'achievement')
     const milestone = await gamificationApi.checkNewMilestone().catch(() => null)
     if (milestone) show(milestone.label, 'achievement')
     router.push('/articles')
