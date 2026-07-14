@@ -66,6 +66,17 @@ const NAV_ITEMS: AdminNavItem[] = [
       </svg>
     ),
   },
+  {
+    href: '/system/pool',
+    label: 'Veille',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.5"/>
+        <path d="M8 5v3l2 1.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        <circle cx="8" cy="8" r="1" fill="currentColor"/>
+      </svg>
+    ),
+  },
 ]
 
 const SYS_BG       = '#0c0c0b'

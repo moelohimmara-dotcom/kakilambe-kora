@@ -1,6 +1,7 @@
 import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from datetime import datetime
 import pytz
 
@@ -251,6 +252,54 @@ async def _catch_up_if_missed(hour: int, tz) -> None:
     asyncio.create_task(_run_kora_cycle())
 
 
+async def _get_configured_pool_interval_hours() -> int:
+    try:
+        from db.connection import get_db
+        from sqlalchemy import text
+        async with get_db() as db:
+            result = await db.execute(text("SELECT value FROM app_settings WHERE key = 'pool_interval_hours'"))
+            row = result.mappings().first()
+        if row and row["value"] is not None:
+            return int(row["value"])
+    except Exception as e:
+        logger.warning("scheduler_pool_interval_db_read_failed", error=str(e))
+    return 2
+
+
+async def _run_pool_job():
+    """Wrapper de job planifié — jamais laisser une exception de veille faire
+    planter le scheduler global (qui porte aussi le cycle quotidien)."""
+    from agent.pool import run_pooling_job
+    try:
+        await run_pooling_job(trigger="scheduled")
+    except Exception as e:
+        logger.error("scheduled_pool_job_failed", error=str(e))
+
+
+async def _run_pool_purge_job():
+    """
+    Purge quotidienne (requirement 5) : expire toute ligne content_pool
+    antérieure au jour courant. Défense en profondeur — même si ce job
+    échoue ou est retardé, agent/pool.py:consume_pool_today() filtre
+    TOUJOURS sur collection_date = CURRENT_DATE, donc une donnée de la
+    veille non purgée à temps ne sera jamais servie comme fraîche pour
+    autant (elle reste juste 'available' en base sans être consommable).
+    """
+    try:
+        from db.connection import get_db
+        from sqlalchemy import text
+        async with get_db() as db:
+            result = await db.execute(text("""
+                UPDATE content_pool SET status = 'expired'
+                WHERE collection_date < CURRENT_DATE AND status = 'available'
+                RETURNING id
+            """))
+            expired_count = len(result.mappings().all())
+        logger.info("pool_purge_completed", expired_count=expired_count)
+    except Exception as e:
+        logger.error("pool_purge_failed", error=str(e))
+
+
 async def start_scheduler():
     tz = pytz.timezone(settings.CYCLE_TIMEZONE)
     hour = await _get_configured_cycle_hour()
@@ -268,11 +317,32 @@ async def start_scheduler():
         # réaliste qu'un service managé qui ne redémarre presque jamais.
         misfire_grace_time=3600,
     )
+
+    pool_interval = await _get_configured_pool_interval_hours()
+    scheduler.add_job(
+        _run_pool_job,
+        IntervalTrigger(hours=pool_interval),
+        id="kora_pool_job",
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=1800,
+    )
+
+    scheduler.add_job(
+        _run_pool_purge_job,
+        CronTrigger(hour=0, minute=5, timezone=tz),
+        id="kora_pool_purge",
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
+
     scheduler.start()
     logger.info(
         "scheduler_started",
         hour=hour,
         timezone=settings.CYCLE_TIMEZONE,
+        pool_interval_hours=pool_interval,
     )
     await _catch_up_if_missed(hour, tz)
 
@@ -289,3 +359,13 @@ def reschedule_cycle_hour(hour: int) -> None:
         logger.info("scheduler_rescheduled", hour=hour)
     except Exception as e:
         logger.warning("scheduler_reschedule_failed", hour=hour, error=str(e))
+
+
+def reschedule_pool_interval(hours: int) -> None:
+    """Reprogramme la fréquence de veille à chaud — appelé depuis PATCH
+    /api/pool/admin/settings, sans redémarrage du service."""
+    try:
+        scheduler.reschedule_job("kora_pool_job", trigger=IntervalTrigger(hours=hours))
+        logger.info("scheduler_pool_rescheduled", hours=hours)
+    except Exception as e:
+        logger.warning("scheduler_pool_reschedule_failed", hours=hours, error=str(e))

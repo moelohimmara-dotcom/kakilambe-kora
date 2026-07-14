@@ -23,6 +23,7 @@ from api.cycle_routes import router as cycle_router
 from api.provider_routes import router as provider_router
 from api.settings_routes import router as settings_router
 from api.webhook_routes import router as webhook_router
+from api.pool_routes import router as pool_router
 
 
 @asynccontextmanager
@@ -66,6 +67,7 @@ app.include_router(cycle_router,    prefix="/api/cycles",   tags=["cycles"])
 app.include_router(provider_router, prefix="/api/providers",tags=["providers"])
 app.include_router(settings_router, prefix="/api/settings", tags=["settings"])
 app.include_router(webhook_router,  prefix="/api/webhooks", tags=["webhooks"])
+app.include_router(pool_router,     prefix="/api/pool",     tags=["pool"])
 
 @app.get("/health", tags=["system"])
 async def health():

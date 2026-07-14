@@ -189,3 +189,45 @@ export const accountApi = {
       body: JSON.stringify({ theme }),
     }),
 }
+
+// ── Veille passive (pool de contenu pré-collecté) ─────────────────────────────
+export interface PoolSourceStatus {
+  source_name: string
+  available: number
+  used: number
+  expired: number
+}
+export interface PoolJob {
+  id?: string
+  trigger: 'scheduled' | 'manual_admin' | 'exception_scrape'
+  started_at: string
+  finished_at: string | null
+  sources_scanned: number
+  items_collected: number
+  duplicates_linked: number
+  status: 'running' | 'completed' | 'failed'
+  error?: string | null
+}
+export interface PoolStatus {
+  sources: PoolSourceStatus[]
+  total_available: number
+  total_used: number
+  total_expired: number
+  last_job: PoolJob | null
+  recent_jobs: PoolJob[]
+  settings: { pool_interval_hours: number; pool_dedup_threshold: number }
+}
+
+export const poolApi = {
+  status: () => request<PoolStatus>('/api/pool/status'),
+  runNow: () =>
+    request<{ job_id: string; sources_scanned: number; items_collected: number; duplicates_linked: number }>(
+      '/api/pool/admin/run-now', { method: 'POST' }
+    ),
+  updateSettings: (data: { pool_interval_hours?: number; pool_dedup_threshold?: number }) =>
+    request<{ ok: boolean }>('/api/pool/admin/settings', { method: 'PATCH', body: JSON.stringify(data) }),
+  reset: () =>
+    request<{ ok: boolean; pool_rows_deleted: number; job_rows_deleted: number }>(
+      '/api/pool/admin/reset', { method: 'POST' }
+    ),
+}

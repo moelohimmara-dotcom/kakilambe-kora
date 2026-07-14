@@ -213,6 +213,54 @@ async def run(state: KoraState) -> KoraState:
     logger.info("node_scraper_start", cycle_id=state["cycle_id"])
     emit_log(state["cycle_id"], "INFO", "Recherche des dernières actualités sur les sources configurées…")
 
+    # Consommation prioritaire du pool de veille passive (migration 011,
+    # agent/pool.py) : le job planifié toutes les 2h a potentiellement déjà
+    # collecté des informations fraîches du jour — les consommer directement
+    # évite de relancer Tavily/Firecrawl à chaque clic sur "Lancer un cycle".
+    # Root cause du besoin (audit 2026-07-14) : jusqu'ici, CHAQUE cycle
+    # relançait un balayage complet en direct, même quand le pool contenait
+    # déjà des éléments exploitables.
+    from agent.pool import consume_pool_today
+
+    pool_items = await consume_pool_today()
+    if pool_items:
+        logger.info("node_scraper_pool_hit", cycle_id=state["cycle_id"], count=len(pool_items))
+        emit_log(
+            state["cycle_id"], "INFO",
+            f"{len(pool_items)} article(s) du pool de veille consommé(s) — aucun scraping nécessaire.",
+        )
+        await _persist_raw_feeds(state["cycle_id"], pool_items)
+        logger.info(
+            "node_scraper_done", cycle_id=state["cycle_id"],
+            total_found=len(pool_items), unique=len(pool_items), valid=len(pool_items),
+            source="pool",
+        )
+        return {**state, "raw_sources": pool_items}
+
+    # Pool épuisé (aucun élément disponible pour le jour courant) — bascule
+    # explicite vers le scraping de secours en direct, journalisée comme
+    # exception distincte d'un fonctionnement normal, pour qu'un admin
+    # puisse suivre la fréquence réelle de ce recours (cf. GET /api/pool/status).
+    logger.warning("pool_exhausted_exception_scrape", cycle_id=state["cycle_id"])
+    emit_log(
+        state["cycle_id"], "WARN",
+        "Pool de veille épuisé pour aujourd'hui — déclenchement d'un scraping de secours en direct…",
+    )
+
+    from core.pool_lock import acquire_scrape_lock, release_scrape_lock
+
+    # Verrouillé contre le job de veille planifié (agent/pool.py) : un cycle
+    # manuel en scraping de secours et le job planifié ne doivent jamais
+    # scraper les mêmes sources simultanément.
+    await acquire_scrape_lock(f"manual_cycle_exception:{state['cycle_id']}")
+    try:
+        return await _run_live_scrape(state)
+    finally:
+        release_scrape_lock()
+
+
+async def _run_live_scrape(state: KoraState) -> KoraState:
+    """Scraping en direct (Tavily + Firecrawl) — chemin d'exception, cf. run()."""
     from integrations.tavily_client import tavily_client
 
     all_results: List[dict] = []
