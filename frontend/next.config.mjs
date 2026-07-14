@@ -14,6 +14,25 @@ const nextConfig = {
     config.resolve.alias['@'] = path.resolve(__dirname)
     return config
   },
+  // Le backend FastAPI est l'unique source de vérité pour /api/* — en
+  // production, Nginx route déjà tout /api/ vers le backend (port 8000)
+  // AVANT que Next.js ne voie la requête, rendant cette règle inopérante
+  // (donc sans risque de conflit). En dev local (`npm run dev`, pas de
+  // Nginx), elle reproduit le même comportement : jusqu'ici, deux copies
+  // de la logique de login coexistaient (app/api/auth/login,
+  // app/api/admin/login vs backend/api/auth_routes.py) — la copie
+  // frontend n'était JAMAIS atteinte en production (Nginx interceptait
+  // avant), seulement en dev local, créant un écart de comportement
+  // invisible entre les deux environnements. Supprimée au profit de
+  // cette redirection vers le backend, seule implémentation réelle.
+  async rewrites() {
+    return [
+      {
+        source: '/api/:path*',
+        destination: `${process.env.BACKEND_URL || 'http://localhost:8000'}/api/:path*`,
+      },
+    ]
+  },
   async headers() {
     return PRIVATE_ROUTES.map(route => ({
       source: `${route}/:path*`,
