@@ -1,3 +1,4 @@
+import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime
@@ -56,6 +57,28 @@ async def _count_pending(cycle_id: str) -> int:
         return 0
 
 
+async def _mark_scheduled_cycle_ran(today_str: str) -> None:
+    """
+    Persiste la date (fuseau Conakry) du dernier cycle réellement déclenché
+    par le scheduler — sert uniquement au rattrapage (cf. _catch_up_if_missed),
+    jamais touché par un lancement manuel depuis le dashboard (POST
+    /api/agent/run, fonction distincte dans api/agent_routes.py).
+    """
+    try:
+        from db.connection import get_db
+        from sqlalchemy import text
+        async with get_db() as db:
+            await db.execute(
+                text(
+                    "INSERT INTO app_settings (key, value) VALUES ('last_scheduled_cycle_date', :d) "
+                    "ON CONFLICT (key) DO UPDATE SET value = :d, updated_at = now()"
+                ),
+                {"d": today_str},
+            )
+    except Exception as e:
+        logger.warning("scheduler_mark_ran_failed", error=str(e))
+
+
 async def _run_kora_cycle():
     from agent.graph import kora_graph_auto, kora_graph_semi
     from integrations.gmail_client import gmail_client
@@ -63,6 +86,7 @@ async def _run_kora_cycle():
 
     cycle_id = str(uuid.uuid4())
     started_at = datetime.now(pytz.timezone(settings.CYCLE_TIMEZONE))
+    await _mark_scheduled_cycle_ran(started_at.strftime("%Y-%m-%d"))
 
     # Décision dynamique — plus de mode "auto" codé en dur qui publiait sur
     # le site live quel que soit le réglage du dashboard.
@@ -178,6 +202,55 @@ async def _get_configured_cycle_hour() -> int:
     return settings.CYCLE_HOUR
 
 
+async def _catch_up_if_missed(hour: int, tz) -> None:
+    """
+    misfire_grace_time protège contre un event loop simplement RALENTI (ex.
+    l'incident réel du 2026-07-14 où un appel Firecrawl synchrone bloquait
+    toute la boucle asyncio), mais pas contre un redémarrage complet du
+    service (déploiement, crash) : APScheduler tourne en mémoire (pas de
+    jobstore persistant) — s'il n'existait pas au moment exact du déclenchement
+    cron, il n'a aucun souvenir d'un tir manqué à rattraper, et se contente de
+    planifier la PROCHAINE occurrence (demain). Sur un VPS auto-géré où les
+    redémarrages manuels sont fréquents, ce chevauchement est plausible.
+
+    Rattrapage explicite au démarrage : si l'heure configurée est déjà passée
+    aujourd'hui (fuseau Conakry) et qu'aucun cycle programmé n'a tourné
+    aujourd'hui (app_settings.last_scheduled_cycle_date, écrit uniquement par
+    _run_kora_cycle — jamais par un lancement manuel), on déclenche le cycle
+    immédiatement plutôt que d'attendre silencieusement demain.
+    """
+    now = datetime.now(tz)
+    today_str = now.strftime("%Y-%m-%d")
+
+    if now.hour < hour:
+        logger.info("cycle_catchup_not_due", hour=hour, current_hour=now.hour)
+        return
+
+    try:
+        from db.connection import get_db
+        from sqlalchemy import text
+        async with get_db() as db:
+            result = await db.execute(
+                text("SELECT value FROM app_settings WHERE key = 'last_scheduled_cycle_date'")
+            )
+            row = result.mappings().first()
+        last_ran = row["value"] if row else None
+    except Exception as e:
+        logger.warning("cycle_catchup_check_failed", error=str(e))
+        return  # panne DB : ne pas déclencher à l'aveugle sans savoir si c'est déjà fait
+
+    if last_ran == today_str:
+        logger.info("cycle_catchup_not_needed", date=today_str)
+        return
+
+    logger.warning(
+        "cycle_catchup_triggered",
+        date=today_str, configured_hour=hour, current_hour=now.hour,
+        detail="Cycle programmé du jour introuvable — probablement manqué par un redémarrage du service, rattrapage immédiat.",
+    )
+    asyncio.create_task(_run_kora_cycle())
+
+
 async def start_scheduler():
     tz = pytz.timezone(settings.CYCLE_TIMEZONE)
     hour = await _get_configured_cycle_hour()
@@ -201,6 +274,7 @@ async def start_scheduler():
         hour=hour,
         timezone=settings.CYCLE_TIMEZONE,
     )
+    await _catch_up_if_missed(hour, tz)
 
 
 def reschedule_cycle_hour(hour: int) -> None:
