@@ -6,7 +6,7 @@ const ADMIN_COOKIE   = 'kora_admin_token'
 const PUBLIC_PATHS = ['/login', '/setup', '/system/login', '/api/auth', '/api/admin']
 
 // Faille corrigée : ce middleware ne comparait le cookie qu'à sa LONGUEUR
-// (`token.length < 8`), jamais à sa valeur réelle. `/api/admin/login` et
+// (`token.length < 8`), jamais à sa valeur réelle. `/api/auth/admin` et
 // `/api/auth/login` posent tous deux le cookie = ADMIN_SECRET_KEY en clair
 // (même secret partagé pour les deux espaces) — n'importe quelle chaîne de
 // 8+ caractères nommée kora_admin_token/kora_session contournait donc

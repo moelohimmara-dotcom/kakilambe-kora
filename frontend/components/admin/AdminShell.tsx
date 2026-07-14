@@ -83,7 +83,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
   async function logout() {
     setLoggingOut(true)
-    await fetch('/api/admin/login', { method: 'DELETE' })
+    await fetch('/api/auth/admin', { method: 'DELETE' })
     router.replace('/system/login')
   }
 
