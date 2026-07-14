@@ -157,21 +157,30 @@ def _append_signature(corps: str) -> str:
     return f"{stripped}\n\n{_SIGNATURE}"
 
 # ── Résolution de la catégorie WordPress ──────────────────────────────────────
-# Source de vérité : table wp_categories (synchronisée depuis l'API WordPress
-# réelle via /api/settings/wp-categories/sync, mappée aux 7 libellés dans
-# Settings → Catégories). Repli sur les IDs codés en dur si la DB est
-# indisponible ou si aucune catégorie n'est encore mappée — mieux vaut une
-# catégorie par défaut correcte qu'un cycle bloqué sur une panne secondaire.
-_CATEGORY_MAP_FALLBACK = {
-    "politique": 4,
-    "economie":  5,
-}
+# Source UNIQUE et systématique : table wp_categories, synchronisée depuis
+# l'API WordPress réelle (GET /wp-json/wp/v2/categories, cf.
+# integrations/wordpress_client.py:list_categories) via
+# POST /api/settings/wp-categories/sync, puis mappée manuellement aux 7
+# libellés éditoriaux via Settings → Catégories. La table figée de
+# Nova_base.txt (jadis codée en dur ici même sous forme d'un petit dict de
+# repli politique/économie) n'est PLUS jamais consultée pour résoudre un ID
+# — root cause corrigée (audit 2026-07-14) : ce repli dupliquait
+# silencieusement 2 des entrées de l'ancienne table figée, contournant de
+# fait la source unique voulue dans certains cas. Seul repli restant :
+# _DEFAULT_CATEGORY_ID (Dépêches), avec journalisation EXPLICITE nommant le
+# libellé éditorial non mappé en cause, pour que l'utilisateur puisse
+# compléter le mapping depuis Settings → Catégories.
 _DEFAULT_CATEGORY_ID = 44
-_ACCENT_MAP = str.maketrans("àâäéèêëîïôöùûüç", "aaaeeeeiioouuuc")
 
 
 async def _resolve_category_id(label: str) -> int:
     if not label:
+        logger.warning(
+            "category_mapping_fallback",
+            kora_label=None,
+            reason="no_label_from_llm",
+            fallback_wp_id=_DEFAULT_CATEGORY_ID,
+        )
         return _DEFAULT_CATEGORY_ID
     try:
         async with get_db() as db:
@@ -183,10 +192,26 @@ async def _resolve_category_id(label: str) -> int:
         if row:
             return row["wp_id"]
     except Exception as e:
-        logger.warning("category_db_lookup_failed", label=label, error=str(e))
+        logger.warning(
+            "category_mapping_fallback",
+            kora_label=label,
+            reason="wp_categories_lookup_failed",
+            error=str(e),
+            fallback_wp_id=_DEFAULT_CATEGORY_ID,
+        )
+        return _DEFAULT_CATEGORY_ID
 
-    normalized = label.strip().lower().translate(_ACCENT_MAP)
-    return _CATEGORY_MAP_FALLBACK.get(normalized, _DEFAULT_CATEGORY_ID)
+    # Aucune ligne wp_categories.kora_label ne correspond à ce libellé —
+    # mapping manquant, pas une panne. Journalisé explicitement pour que ce
+    # recours au fallback soit visible et actionnable (Settings → Catégories),
+    # au lieu de disparaître silencieusement dans l'article publié.
+    logger.warning(
+        "category_mapping_fallback",
+        kora_label=label,
+        reason="no_wp_category_mapped_for_label",
+        fallback_wp_id=_DEFAULT_CATEGORY_ID,
+    )
+    return _DEFAULT_CATEGORY_ID
 
 def _build_sources_section(article: dict) -> tuple[str, str, str]:
     """Retourne (sources_section, url_principale, source_nom)."""
