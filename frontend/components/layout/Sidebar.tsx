@@ -1,7 +1,8 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { useSidebar } from '@/lib/contexts/SidebarContext'
 import { Badge } from '@/components/ui/Badge'
 
@@ -55,7 +56,15 @@ const bottomItems: NavItem[] = [
 
 export function Sidebar() {
   const pathname = usePathname()
+  const router = useRouter()
   const { collapsed } = useSidebar()
+  const [loggingOut, setLoggingOut] = useState(false)
+
+  async function logout() {
+    setLoggingOut(true)
+    await fetch('/api/auth/login', { method: 'DELETE' })
+    router.replace('/login')
+  }
 
   return (
     <>
@@ -68,8 +77,13 @@ export function Sidebar() {
         }
         aria-label="Navigation principale"
       >
-        {/* Logo */}
-        <div className={`flex items-center h-16 px-4 border-b border-gray-light shrink-0 ${collapsed ? 'justify-center' : ''}`}>
+        {/* Logo — cliquable, ramène au dashboard depuis n'importe quelle page
+            (ex. retour rapide depuis /settings, cf. demande explicite) */}
+        <Link
+          href="/dashboard"
+          className={`flex items-center h-16 px-4 border-b border-gray-light shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange focus-visible:ring-inset ${collapsed ? 'justify-center' : ''}`}
+          aria-label="Retour au tableau de bord"
+        >
           {collapsed ? (
             <span className="text-orange font-heading font-extrabold text-xl">/K</span>
           ) : (
@@ -77,7 +91,7 @@ export function Sidebar() {
               <span className="text-orange">/</span>KORA
             </span>
           )}
-        </div>
+        </Link>
 
         {/* Nav principale */}
         <nav className="flex-1 py-4 overflow-y-auto overflow-x-hidden" aria-label="Menu éditorial">
@@ -107,6 +121,27 @@ export function Sidebar() {
                   </div>
                 )}
               </div>
+            </li>
+            {/* Déconnexion */}
+            <li>
+              <button
+                onClick={logout}
+                disabled={loggingOut}
+                className={
+                  `w-full flex items-center gap-3 px-3 py-2.5 rounded-md ` +
+                  `font-heading text-[13px] font-medium transition-colors duration-100 ` +
+                  `text-gray-dk hover:bg-danger/10 hover:text-danger disabled:opacity-40 ` +
+                  `focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange ` +
+                  `${collapsed ? 'justify-center' : ''}`
+                }
+                aria-label={collapsed ? 'Se déconnecter' : undefined}
+                title={collapsed ? 'Se déconnecter' : undefined}
+              >
+                <span className="shrink-0 w-[18px] h-[18px] flex items-center justify-center">
+                  <IconLogout />
+                </span>
+                {!collapsed && <span>{loggingOut ? 'Déconnexion…' : 'Se déconnecter'}</span>}
+              </button>
             </li>
           </ul>
         </div>
@@ -208,6 +243,15 @@ function IconTrash({ active }: { active: boolean }) {
       <path d="M3 5h12M7 5V3.5a1 1 0 011-1h2a1 1 0 011 1V5" stroke="currentColor" strokeWidth={active ? 2 : 1.5} strokeLinecap="round"/>
       <path d="M4.5 5l.7 9.5A1.5 1.5 0 006.7 16h4.6a1.5 1.5 0 001.5-1.5L13.5 5" stroke="currentColor" strokeWidth={active ? 2 : 1.5} strokeLinecap="round" strokeLinejoin="round"/>
       <path d="M7.5 8v4.5M10.5 8v4.5" stroke="currentColor" strokeWidth={active ? 2 : 1.5} strokeLinecap="round"/>
+    </svg>
+  )
+}
+
+function IconLogout() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+      <path d="M11 2h4a1 1 0 011 1v12a1 1 0 01-1 1h-4M7 12.5L2.5 9 7 5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M2.5 9H11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
     </svg>
   )
 }

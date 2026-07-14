@@ -1,8 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
-import { useEffect, useRef } from 'react'
+import { usePathname, useRouter } from 'next/navigation'
+import { useEffect, useRef, useState } from 'react'
 import { useSidebar } from '@/lib/contexts/SidebarContext'
 import { Badge } from '@/components/ui/Badge'
 
@@ -19,7 +19,15 @@ const navItems = [
 export function MobileSidebar() {
   const { mobileOpen, closeMobile } = useSidebar()
   const pathname = usePathname()
+  const router = useRouter()
   const drawerRef = useRef<HTMLElement>(null)
+  const [loggingOut, setLoggingOut] = useState(false)
+
+  async function logout() {
+    setLoggingOut(true)
+    await fetch('/api/auth/login', { method: 'DELETE' })
+    router.replace('/login')
+  }
 
   // Ferme au changement de page
   useEffect(() => { closeMobile() }, [pathname, closeMobile])
@@ -78,9 +86,14 @@ export function MobileSidebar() {
       >
         {/* Header */}
         <div className="flex items-center justify-between h-16 px-5 border-b border-gray-light">
-          <span className="font-heading font-extrabold text-lg text-anthracite">
+          {/* Logo — cliquable, ramène au dashboard (ferme le tiroir via le
+              useEffect de changement de pathname ci-dessus) */}
+          <Link
+            href="/dashboard"
+            className="font-heading font-extrabold text-lg text-anthracite focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange rounded-sm"
+          >
             <span className="text-orange">/</span>KORA
-          </span>
+          </Link>
           <button
             onClick={closeMobile}
             className="w-9 h-9 flex items-center justify-center rounded-md text-gray-dk hover:bg-gray-pale focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange"
@@ -121,8 +134,19 @@ export function MobileSidebar() {
         </nav>
 
         {/* Footer */}
-        <div className="p-4 border-t border-gray-light">
+        <div className="p-4 border-t border-gray-light space-y-3">
           <Badge variant="sage" dot pulse>KORA actif</Badge>
+          <button
+            onClick={logout}
+            disabled={loggingOut}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-md font-heading text-[14px] font-medium text-gray-dk hover:bg-danger/10 hover:text-danger disabled:opacity-40 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange"
+          >
+            <svg width="16" height="16" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+              <path d="M11 2h4a1 1 0 011 1v12a1 1 0 01-1 1h-4M7 12.5L2.5 9 7 5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M2.5 9H11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+            {loggingOut ? 'Déconnexion…' : 'Se déconnecter'}
+          </button>
         </div>
       </aside>
     </div>

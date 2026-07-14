@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useSidebar } from '@/lib/contexts/SidebarContext'
 import { Badge } from '@/components/ui/Badge'
 
@@ -40,10 +41,14 @@ export function Topbar({ title, children }: TopbarProps) {
         <HamburgerIcon />
       </button>
 
-      {/* Logo mobile */}
-      <span className="md:hidden font-heading font-extrabold text-lg text-anthracite">
+      {/* Logo mobile — cliquable, ramène au dashboard */}
+      <Link
+        href="/dashboard"
+        className="md:hidden font-heading font-extrabold text-lg text-anthracite focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange rounded-sm"
+        aria-label="Retour au tableau de bord"
+      >
         <span className="text-orange">/</span>KORA
-      </span>
+      </Link>
 
       {/* Titre de page */}
       {title && (
