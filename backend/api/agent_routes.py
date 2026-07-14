@@ -63,10 +63,48 @@ class RunRequest(BaseModel):
 # consultable via GET /status — aucune perte de travail contrairement à une
 # exécution strictement inline dans le handler de requête.
 
+async def _find_running_cycle_id() -> Optional[str]:
+    """
+    Verrou anti-doublon de cycle (audit 2026-07-14) : avant ce correctif, rien
+    n'empêchait deux appels POST /run concurrents de lancer chacun un graphe
+    LangGraph complet — la seule protection existante était la déduplication
+    best-effort par URL dans agent/nodes/scraper.py (_load_seen_urls),
+    insuffisante contre deux cycles réellement simultanés (même fenêtre de
+    scraping, mêmes sources candidates, deux rédactions/publications
+    indépendantes possibles sur le même sujet). Vérifie d'abord la source de
+    vérité en mémoire (_running_tasks, la plus à jour), puis la DB en repli
+    (survit à un redémarrage backend où _running_tasks est vide alors qu'un
+    cycle RUNNING existe toujours en base).
+    """
+    for cid, task in list(_running_tasks.items()):
+        if not task.done():
+            return cid
+    db_active = await _get_active_cycle_from_db()
+    if db_active and db_active.get("status") == "RUNNING":
+        return db_active.get("id")
+    return None
+
+
 @router.post("/run")
 async def run_cycle(body: RunRequest):
     if body.mode not in ("auto", "semi"):
         raise HTTPException(status_code=400, detail="mode must be 'auto' or 'semi'")
+
+    existing_cycle_id = await _find_running_cycle_id()
+    if existing_cycle_id:
+        logger.warning(
+            "cycle_lock_rejected",
+            existing_cycle_id=existing_cycle_id,
+            requested_cycle_id=body.cycle_id,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Un cycle est déjà en cours (cycle_id={existing_cycle_id}) — "
+                "attends sa fin ou annule-le via /api/agent/cancel avant d'en "
+                "lancer un nouveau."
+            ),
+        )
 
     cycle_id = body.cycle_id or str(uuid.uuid4())
 

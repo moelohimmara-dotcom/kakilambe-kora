@@ -11,7 +11,16 @@ class FirecrawlClient:
     def _scrape_sync(self, url: str) -> Optional[str]:
         from firecrawl import FirecrawlApp
         app = FirecrawlApp(api_key=self.api_key)
-        result = app.scrape_url(url, params={"formats": ["markdown"]})
+        # onlyMainContent=True — sans ce paramètre explicite, le markdown
+        # renvoyé inclut la navigation/le header/les articles suggérés du
+        # site source, qui peuvent occuper l'intégralité des 3000 premiers
+        # caractères pris par _build_sources_section() (agent/nodes/writer.py)
+        # et évincer entièrement le vrai corps de l'article. Root cause
+        # découverte le 2026-07-14 en traçant pourquoi les articles restaient
+        # trop courts malgré un budget de tokens suffisant : le modèle
+        # recevait presque exclusivement du menu de site, pas des faits — il
+        # refusait (à raison) d'halluciner le reste pour atteindre 800 mots.
+        result = app.scrape_url(url, params={"formats": ["markdown"], "onlyMainContent": True})
         return result.get("markdown", "")
 
     async def scrape(self, url: str) -> Optional[str]:

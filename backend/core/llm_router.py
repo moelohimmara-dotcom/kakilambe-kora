@@ -280,6 +280,7 @@ class KoraLLMRouter:
         response_format=None,
         tools: Optional[list] = None,
         tool_choice=None,
+        reasoning_effort: Optional[str] = None,
     ):
         self._set_litellm_keys()
         providers = self._attempt_order()
@@ -288,13 +289,13 @@ class KoraLLMRouter:
 
         if stream:
             return self._stream_with_fallback(
-                providers, messages, temperature, max_tokens, response_format, tools, tool_choice
+                providers, messages, temperature, max_tokens, response_format, tools, tool_choice, reasoning_effort
             )
         return await self._complete_with_fallback(
-            providers, messages, temperature, max_tokens, response_format, tools, tool_choice
+            providers, messages, temperature, max_tokens, response_format, tools, tool_choice, reasoning_effort
         )
 
-    def _build_params(self, provider: str, messages, temperature, max_tokens, stream, response_format, tools, tool_choice) -> dict:
+    def _build_params(self, provider: str, messages, temperature, max_tokens, stream, response_format, tools, tool_choice, reasoning_effort=None) -> dict:
         params = {
             "model": PROVIDER_CONFIG[provider]["primary_model"],
             "messages": messages,
@@ -307,14 +308,28 @@ class KoraLLMRouter:
         if tools:
             params["tools"] = tools
             params["tool_choice"] = tool_choice or "auto"
+        # gpt-oss-120b (Cerebras) est un modèle de raisonnement : ses tokens de
+        # "réflexion" interne (completion_tokens_details.reasoning_tokens) sont
+        # décomptés du même budget max_tokens que la réponse finale, et leur
+        # volume est imprévisible (664 à 2849 tokens observés sur un MÊME prompt
+        # répété) — root cause confirmée le 2026-07-14 des échecs "Unterminated
+        # string" et du contenu tronqué/vide (finish_reason="length" avant même
+        # le début du JSON de réponse). reasoning_effort="low" ramène ce
+        # surcoût à ~130-230 tokens de façon stable, laissant le budget dispo
+        # pour un corps de 800-1200 mots. Uniquement supporté par les modèles
+        # de raisonnement (gpt-oss) — ignoré silencieusement par les autres
+        # providers si jamais transmis (litellm ne bronche pas sur un param
+        # inconnu pour la plupart des backends OpenAI-compatibles).
+        if reasoning_effort and "gpt-oss" in PROVIDER_CONFIG[provider]["primary_model"]:
+            params["reasoning_effort"] = reasoning_effort
         return params
 
     async def _complete_with_fallback(
-        self, providers: list[str], messages, temperature, max_tokens, response_format, tools, tool_choice
+        self, providers: list[str], messages, temperature, max_tokens, response_format, tools, tool_choice, reasoning_effort=None
     ):
         last_err = None
         for provider in providers:
-            params = self._build_params(provider, messages, temperature, max_tokens, False, response_format, tools, tool_choice)
+            params = self._build_params(provider, messages, temperature, max_tokens, False, response_format, tools, tool_choice, reasoning_effort)
             try:
                 response = await litellm.acompletion(**params)
                 await self._mark_success(provider, getattr(response, "usage", None))
@@ -331,7 +346,7 @@ class KoraLLMRouter:
         raise RuntimeError(f"All LLM providers failed. Dernière erreur ({providers[-1]}): {last_err}")
 
     async def _stream_with_fallback(
-        self, providers: list[str], messages, temperature, max_tokens, response_format, tools, tool_choice
+        self, providers: list[str], messages, temperature, max_tokens, response_format, tools, tool_choice, reasoning_effort=None
     ):
         """
         Générateur async : tente chaque provider, en tamponnant les chunks SANS
@@ -347,7 +362,7 @@ class KoraLLMRouter:
         """
         last_err = None
         for provider in providers:
-            params = self._build_params(provider, messages, temperature, max_tokens, True, response_format, tools, tool_choice)
+            params = self._build_params(provider, messages, temperature, max_tokens, True, response_format, tools, tool_choice, reasoning_effort)
             buffered = []
             try:
                 response = await litellm.acompletion(**params)

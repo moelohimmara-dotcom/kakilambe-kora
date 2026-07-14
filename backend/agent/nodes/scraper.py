@@ -157,6 +157,46 @@ async def _fetch_content(url: str) -> str:
     return content or ""
 
 
+_QUOTE_NORMALIZE = str.maketrans({"’": "'", "‘": "'", "«": '"', "»": '"', "“": '"', "”": '"'})
+
+
+def _strip_boilerplate_prefix(content: str, title: str) -> str:
+    """
+    Root cause réelle des articles trop courts malgré une exigence de
+    longueur explicite (audit 2026-07-14) : Firecrawl (même avec
+    onlyMainContent=True, cf. firecrawl_client.py — sans effet mesurable sur
+    ces sites) renvoie un markdown où la navigation, les widgets de
+    connexion/abonnement et les bannières de cookies (souvent DUPLIQUÉS
+    plusieurs fois dans le DOM, ex. forbesafrique.com) précèdent le vrai
+    corps de l'article. Le vrai texte n'apparaît parfois qu'après 4000+
+    caractères de bruit — bien après la fenêtre de troncature — privant le
+    LLM de tout fait réel à exploiter, qui refuse (à raison) d'halluguer le
+    reste pour atteindre 800 mots.
+
+    Ancre l'extraction sur le TITRE réel de l'article (déjà connu via
+    Tavily) plutôt que sur le début brut du scrape : tout ce qui précède la
+    première occurrence du titre est très probablement du bruit de mise en
+    page, jamais du contenu éditorial. Repli sûr sur le contenu inchangé si
+    le titre n'est trouvé sous aucune forme (guillemets typographiques
+    normalisés, ou ses 6 premiers mots significatifs).
+    """
+    if not content or not title:
+        return content
+
+    candidates = [title, title.translate(_QUOTE_NORMALIZE)]
+    words = title.split()
+    if len(words) > 6:
+        candidates.append(" ".join(words[:6]))
+
+    normalized_content = content.translate(_QUOTE_NORMALIZE)
+    for candidate in candidates:
+        idx = normalized_content.find(candidate.translate(_QUOTE_NORMALIZE))
+        if idx > 0:
+            return content[idx:]
+
+    return content
+
+
 async def run(state: KoraState) -> KoraState:
     logger.info("node_scraper_start", cycle_id=state["cycle_id"])
     emit_log(state["cycle_id"], "INFO", "Recherche des dernières actualités sur les sources configurées…")
@@ -255,7 +295,7 @@ async def run(state: KoraState) -> KoraState:
             return article
         try:
             content = await _fetch_content(url)
-            article["markdown_content"] = content
+            article["markdown_content"] = _strip_boilerplate_prefix(content, article.get("title", ""))
         except asyncio.TimeoutError:
             logger.warning("scrape_timeout", url=url)
             article["markdown_content"] = article.get("content", "")

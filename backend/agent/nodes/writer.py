@@ -38,9 +38,19 @@ def _domain_of(url: str) -> str:
     except IndexError:
         return ""
 
-_WRITE_PROMPT = """Tu es KORA, journaliste IA expert de kakilambe.com, site d'actualité guinéen.
-Style éditorial : BBC News Africa. Ton factuel, chaleureux, direct — jamais universitaire, jamais scolaire.
-Langue : FRANÇAIS. Tu n'as aucune ligne politique — tu ne favorises ni ne défavorises un parti, un gouvernement ou un acteur.
+_WRITE_PROMPT = """{editorial_identity}
+
+{length_requirement}
+
+RAPPEL STRUCTUREL LIÉ À LA LONGUEUR : la règle "paragraphes de 2 lignes maximum"
+ne veut PAS dire "article court" — elle veut dire BEAUCOUP de paragraphes courts.
+Pour atteindre 800-1200 mots avec des paragraphes de 2 lignes, il faut EN MOYENNE
+8 à 12 sous-titres (##), chacun suivi d'AU MOINS 2 à 3 paragraphes distincts (pas
+un seul paragraphe par sous-titre). Avant de finaliser ta réponse, compte
+mentalement les mots du champ "corps" : si le total est sous 800, ajoute une ou
+plusieurs sections supplémentaires (contexte historique, comparaison régionale,
+détail chiffré, réaction d'un acteur cité dans les sources) plutôt que de
+livrer un article court.
 
 SOURCE(S) À TRAITER :
 {sources_section}
@@ -164,7 +174,12 @@ def _build_sources_section(article: dict) -> tuple[str, str, str]:
     """Retourne (sources_section, url_principale, source_nom)."""
     extra = article.get("aggregated_sources", [])
     url = article.get("url", "")
-    contenu = (article.get("markdown_content") or article.get("content", ""))[:3000]
+    # 3000 → 6000 : avec onlyMainContent=True (cf. firecrawl_client.py), le
+    # contenu n'est plus pollué par la navigation du site, donc de vrais
+    # articles longs peuvent légitimement dépasser 3000 caractères — les
+    # tronquer prématurément privait le modèle de faits réels nécessaires
+    # pour atteindre les 800-1200 mots exigés (KORA Éditeur).
+    contenu = (article.get("markdown_content") or article.get("content", ""))[:6000]
     titre = article.get("title", "")
     source_nom = article.get("source", url.split("/")[2] if url else "Source inconnue")
 
@@ -219,6 +234,60 @@ _BANNED_HEADERS = (
     "introduction", "contexte", "conclusion", "perspective", "perspectives",
     "enjeux", "résumé",
 )
+_BANNED_HEADER_WORD_RE = re.compile(
+    r"\b(?:introduction|contexte|conclusion|perspectives?|enjeux|résumé)\b",
+    re.IGNORECASE,
+)
+_HEADER_LEADING_CONNECTOR_RE = re.compile(
+    r"^(?:de la|du|des|de|pour|sur les|sur|quelles?|quels?)\s+", re.IGNORECASE
+)
+
+
+def _fix_generic_headers(corps: str) -> str:
+    """
+    Post-traitement DÉTERMINISTE (aucun appel LLM), pas une nouvelle tentative
+    de génération. Root cause du 2026-07-14 (cycles 84f489e2, 766bbbc5) :
+    même après ajout d'un retour correctif explicite dans la conversation
+    (cf. le bloc `messages.append` dans _write_with_retry, qui liste les
+    violations exactes après rejet), le modèle réintroduit presque
+    systématiquement "Contexte...", "Perspectives...", "Conclusion..." en
+    tête de sous-titre d'une tentative à l'autre (observé sur au moins 4
+    cycles réels distincts) — l'instruction "n'utilise jamais ces mots"
+    n'est pas fiable à 100% en génération libre, quel que soit le nombre de
+    tentatives. Plutôt que de relancer indéfiniment (coût, latence, sans
+    garantie de convergence dans le budget de _MAX_RETRIES), on retire
+    mécaniquement le mot scolaire du sous-titre et on garde le reste, déjà
+    factuel/spécifique dans tous les cas observés (ex. "Contexte historique
+    de la transition guinéenne" → "Historique de la transition guinéenne").
+    """
+    lines = corps.split("\n")
+    fixed_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith("##"):
+            fixed_lines.append(line)
+            continue
+        header_text = stripped.lstrip("#").strip()
+        if not _BANNED_HEADER_WORD_RE.search(header_text):
+            fixed_lines.append(line)
+            continue
+        cleaned = _BANNED_HEADER_WORD_RE.sub("", header_text)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" :,-–—?")
+        # Boucle car un titre peut chaîner deux connecteurs après suppression
+        # du mot banni (ex. "quelle perspective pour l'avenir" -> "quelle  pour
+        # l'avenir" après suppression -> il faut retirer "quelle" PUIS "pour").
+        while True:
+            new_cleaned = _HEADER_LEADING_CONNECTOR_RE.sub("", cleaned).strip(" :,-–—?")
+            if new_cleaned == cleaned:
+                break
+            cleaned = new_cleaned
+        if len(cleaned.split()) < 2:
+            # Rien d'exploitable après suppression du mot banni — repli
+            # neutre plutôt que de publier un sous-titre vide ou tronqué.
+            cleaned = "Ce que l'on sait à ce stade"
+        cleaned = cleaned[0].upper() + cleaned[1:]
+        fixed_lines.append(f"## {cleaned}")
+    return "\n".join(fixed_lines)
 
 
 def _validate_style(chapeau: str, corps: str) -> list[str]:
@@ -264,15 +333,137 @@ def _validate_style(chapeau: str, corps: str) -> list[str]:
                 f"paragraphe trop long ({word_count} mots, max ~45 pour 2 lignes) : {block[:60]!r}…"
             )
 
+    # Garde-fou de longueur — en plus de l'instruction du prompt (KORA
+    # Éditeur, 800-1200 mots), défense en profondeur si le LLM l'ignore
+    # malgré tout : déclenche un retry plutôt que de publier un article
+    # squelettique (cf. l'exemple "Forbes Afrique" à ~150 mots, root cause
+    # du 2026-07-14 : prompt figé sans aucune exigence de longueur).
+    total_words = len(body_without_signature.split())
+    if total_words < 700:
+        violations.append(
+            f"corps trop court ({total_words} mots, minimum attendu ~800) — sources probablement sous-exploitées"
+        )
+
     return violations
 
 
 _MAX_RETRIES = 2
 
+# Repli si la base est indisponible — ne doit jamais faire planter un cycle,
+# mais volontairement proche des vraies valeurs en base pour que la
+# dégradation reste discrète plutôt que de produire un article générique.
+_FALLBACK_IDENTITY = (
+    "Tu es KORA, journaliste IA expert de kakilambe.com, site d'actualité guinéen. "
+    "Style éditorial : BBC News Africa. Ton factuel, chaleureux, direct — jamais "
+    "universitaire, jamais scolaire. Langue : FRANÇAIS. Tu n'as aucune ligne "
+    "politique — tu ne favorises ni ne défavorises un parti, un gouvernement ou un acteur."
+)
+_FALLBACK_LENGTH_REQUIREMENT = (
+    "LONGUEUR OBLIGATOIRE : le champ \"corps\" doit compter entre 800 et 1200 mots. "
+    "Si les sources fournies sont insuffisantes pour atteindre 800 mots, enrichis "
+    "l'article en développant le contexte, les enjeux et les précisions factuelles "
+    "cohérentes avec le sujet — sans jamais inventer de faits, chiffres, citations "
+    "ou déclarations absents des sources."
+)
+
+
+async def _load_editorial_prompts() -> tuple[str, str]:
+    """
+    Root cause du bug "articles trop courts et génériques" (audit 2026-07-14) :
+    _WRITE_PROMPT était un template figé en dur, totalement déconnecté de
+    system_prompts — KORA Journaliste (identité éditoriale, verrouillé) et
+    KORA Éditeur (règle des 800-1200 mots + enrichissement, configurable
+    depuis /settings) n'étaient JAMAIS chargés ni injectés dans l'appel LLM
+    réel de l'étape WRITE. Modifier ces prompts depuis l'UI n'avait donc
+    strictement aucun effet sur les articles réellement produits.
+
+    Charge maintenant les deux à chaud à chaque rédaction, pour que toute
+    modification faite depuis /settings (via le mécanisme officiel de
+    modification des prompts) s'applique immédiatement aux prochains cycles,
+    sans redéploiement.
+    """
+    identity = _FALLBACK_IDENTITY
+    length_requirement = _FALLBACK_LENGTH_REQUIREMENT
+    try:
+        async with get_db() as db:
+            result = await db.execute(
+                text("SELECT name, content FROM system_prompts WHERE name IN ('KORA Journaliste', 'KORA Éditeur')")
+            )
+            rows = {r["name"]: r["content"] for r in result.mappings().all()}
+        if rows.get("KORA Journaliste"):
+            identity = rows["KORA Journaliste"]
+        if rows.get("KORA Éditeur"):
+            length_requirement = (
+                "DIRECTIVE ÉDITORIALE COMPLÉMENTAIRE (KORA Éditeur) :\n" + rows["KORA Éditeur"]
+            )
+    except Exception as e:
+        logger.warning("writer_prompts_load_failed", error=str(e))
+    return identity, length_requirement
+
+
+_MIN_WORDS_BEFORE_EXPAND = 700
+
+
+async def _expand_corps_if_short(corps: str, titre: str, length_requirement: str) -> str:
+    """
+    Passe d'édition RÉELLE (deuxième appel LLM dédié), pas une simple instruction
+    ajoutée au prompt de rédaction. Root cause du 2026-07-14 (cycle 75254bed) :
+    même avec un prompt de rédaction renforcé (rappel structurel, budget de
+    tokens généreux, reasoning_effort réduit), le modèle livre systématiquement
+    un corps de ~450-530 mots au premier jet — il traite "800-1200 mots" comme
+    un objectif secondaire face aux contraintes de style (paragraphes courts,
+    sous-titres fréquents). KORA Éditeur a justement été rédigé par l'utilisateur
+    comme les instructions d'une PASSE D'ENRICHISSEMENT DÉDIÉE ("Si le texte
+    fourni est plus court que 800 mots... enrichis-le") — jamais exécutée comme
+    telle avant ce correctif, seulement diluée dans le prompt de rédaction.
+    N'invoque un second appel que si nécessaire (économie de coût/latence).
+    """
+    word_count = len(corps.split())
+    if word_count >= _MIN_WORDS_BEFORE_EXPAND:
+        return corps
+
+    editor_prompt = (
+        f"{length_requirement}\n\n"
+        f"ARTICLE ACTUEL (titre : {titre}) — {word_count} mots dans le champ corps ci-dessous :\n\n"
+        f"{corps}\n\n"
+        "Ta tâche : réponds UNIQUEMENT avec le texte complet et enrichi de ce corps "
+        "(entre 800 et 1200 mots), sans JSON, sans commentaire, sans texte avant ou "
+        "après. Conserve le format Markdown existant (sous-titres ## suivis d'un "
+        "double saut de ligne). RÈGLES STRICTES À RESPECTER SUR LE TEXTE ENTIER "
+        "(sections existantes ET nouvelles) :\n"
+        "- Chaque paragraphe fait AU MAXIMUM 45 mots (2 lignes) — un paragraphe plus "
+        "long doit être scindé en plusieurs paragraphes séparés par un double saut de ligne.\n"
+        "- INTERDICTION ABSOLUE des sous-titres génériques/scolaires suivants (sous "
+        "quelque forme que ce soit, question ou non) : \"Introduction\", \"Contexte\", "
+        "\"Conclusion\", \"Perspective(s)\", \"Enjeux\", \"Résumé\" — remplace tout "
+        "sous-titre de ce type par une question factuelle précise ou un libellé "
+        "d'entité (nom d'acteur, de lieu, de chiffre).\n"
+        "- Mots et expressions interdits : révolutionnaire, crucial(e), indéniable, "
+        "explorer, transcender, de nos jours, au cœur de, véritable thriller, catalyseur.\n"
+        "Ajoute des sections supplémentaires "
+        "(contexte, précisions factuelles, enjeux, réactions déjà présentes dans le "
+        "texte) pour atteindre la longueur requise — sans jamais inventer un fait, un "
+        "chiffre ou une citation absents du texte actuel."
+    )
+    try:
+        response = await llm_router.complete(
+            messages=[{"role": "user", "content": editor_prompt}],
+            temperature=0.5,
+            max_tokens=4000,
+            reasoning_effort="low",
+        )
+        expanded = response.choices[0].message.content
+        if expanded and len(expanded.split()) > word_count:
+            return expanded.strip()
+    except Exception as e:
+        logger.warning("writer_expand_failed", error=str(e))
+    return corps
+
 
 async def _write_with_retry(article: dict) -> ArticleKORA:
     sources_section, url, source_nom = _build_sources_section(article)
     titre = article.get("title", "Article sans titre")
+    editorial_identity, length_requirement = await _load_editorial_prompts()
 
     # Créditation transparente des sources agrégées (règle de gouvernance
     # éditoriale n°4 : un article de synthèse cross-média doit nommer
@@ -295,6 +486,8 @@ async def _write_with_retry(article: dict) -> ArticleKORA:
         sources_credit_instruction = ""
 
     prompt = _WRITE_PROMPT.format(
+        editorial_identity=editorial_identity,
+        length_requirement=length_requirement,
         sources_section=sources_section,
         url_principale=url,
         source_nom=source_nom,
@@ -303,19 +496,41 @@ async def _write_with_retry(article: dict) -> ArticleKORA:
     )
 
     last_err = None
+    messages = [{"role": "user", "content": prompt}]
     for attempt in range(_MAX_RETRIES + 1):
         try:
             response = await llm_router.complete(
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
                 temperature=0.7,
-                max_tokens=2048,
+                # Root cause exacte confirmée le 2026-07-14 (cycle
+                # 5e66765b) en rejouant le prompt réel en isolation contre
+                # cerebras/gpt-oss-120b : c'est un modèle de RAISONNEMENT —
+                # ses tokens de réflexion interne (usage.completion_tokens_
+                # details.reasoning_tokens) sont décomptés du MÊME budget
+                # max_tokens que la réponse. Sur un prompt identique répété,
+                # ce coût variait de 664 à 2849 tokens (observé), engloutissant
+                # parfois plus de 80% des 3500 tokens alloués AVANT que le
+                # modèle ne commence à écrire le JSON de réponse — d'où,
+                # selon les cas, un contenu tronqué ("Unterminated string"),
+                # un corps rationné à ~460-500 mots, ou un content vide/None
+                # (finish_reason="length" atteint pendant la phase de
+                # raisonnement). reasoning_effort="low" (cf. core/llm_router.py)
+                # ramène ce surcoût à ~130-230 tokens de façon stable ; le
+                # budget est remonté à 6000 pour laisser une marge réelle à un
+                # corps de 800-1200 mots + le reste du schéma JSON.
+                max_tokens=6000,
                 response_format={"type": "json_object"},
+                reasoning_effort="low",
             )
             raw = response.choices[0].message.content
             data = json.loads(raw)
 
             chapeau = data.get("chapeau", "")
-            corps_signed = _append_signature(data.get("corps", ""))
+            corps_expanded = await _expand_corps_if_short(
+                data.get("corps", ""), data.get("titre", titre), length_requirement
+            )
+            corps_fixed_headers = _fix_generic_headers(corps_expanded)
+            corps_signed = _append_signature(corps_fixed_headers)
 
             violations = _validate_style(chapeau, corps_signed)
             if violations:
@@ -324,6 +539,33 @@ async def _write_with_retry(article: dict) -> ArticleKORA:
                     attempt=attempt,
                     violations=violations,
                 )
+                # Root cause du plafond de succès observé après le correctif de
+                # longueur (cycle 84f489e2, 2026-07-14) : les 3 tentatives d'un
+                # même article réutilisaient EXACTEMENT le même prompt initial
+                # (aucune mémoire des violations précédentes) — de simples
+                # re-tirages indépendants à temperature=0.7, sans corrélation
+                # avec la raison réelle du rejet précédent. Le modèle répétait
+                # donc souvent la même erreur (ex. sous-titre "Contexte de X")
+                # d'une tentative à l'autre. On enrichit maintenant la
+                # conversation avec la réponse rejetée + la liste exacte des
+                # violations, pour que la tentative suivante corrige
+                # spécifiquement ces points plutôt que de repartir à l'aveugle.
+                messages.append({"role": "assistant", "content": raw})
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Cette réponse a été REJETÉE pour non-conformité à la charte "
+                        "éditoriale, pour les raisons précises suivantes :\n- "
+                        + "\n- ".join(violations)
+                        + "\n\nRenvoie le JSON complet corrigé (mêmes règles que "
+                        "l'instruction initiale), en corrigeant SPÉCIFIQUEMENT ces "
+                        "points — ne réintroduis aucune des violations listées "
+                        "ci-dessus. Ne raccourcis pas le corps pour corriger un "
+                        "sous-titre ou un paragraphe : reformule ou scinde "
+                        "seulement les passages fautifs, en conservant les 800 à "
+                        "1200 mots déjà exigés."
+                    ),
+                })
                 raise ValueError(f"Article rejeté (non-conforme à la charte) : {'; '.join(violations)}")
 
             # Validation Pydantic — catégorie résolue en Python, jamais devinée par le LLM
