@@ -7,7 +7,6 @@ POST /api/agent/resume/{id}   → Reprend après validation HITL
 POST /api/agent/cancel/{id}   → Kill switch : annule le cycle en cours
 """
 import uuid
-import json
 import asyncio
 import time
 from fastapi import APIRouter, HTTPException
@@ -17,6 +16,13 @@ from sqlalchemy import text
 from typing import Optional
 
 from core.logger import logger
+from core.cycle_events import (
+    create_queue, get_queue, drop_queue,
+    emit_log as _emit_log, close_stream as _close_stream,
+    get_cycle_logs_history as _get_cycle_logs_history,
+    sse_event as _sse_event,
+    _SENTINEL,
+)
 
 router = APIRouter()
 
@@ -29,11 +35,9 @@ _cycles: dict = {}
 # pas seulement de marquer un statut en base pendant que le graphe continue.
 _running_tasks: dict[str, asyncio.Task] = {}
 
-# ── Queues de logs SSE par cycle (asyncio, pas de Redis requis) ───────────────
-# { cycle_id: asyncio.Queue }  — créée au lancement, nettoyée après 5 min
-_log_queues: dict[str, asyncio.Queue] = {}
-
-_SENTINEL = object()  # signal de fin de stream
+# Les queues de logs SSE elles-mêmes vivent désormais dans core/cycle_events.py
+# — importable aussi depuis agent/nodes/*.py (emit_log direct à chaque étape
+# du pipeline), ce qui aurait créé un cycle d'import en restant ici.
 
 
 class RunRequest(BaseModel):
@@ -179,7 +183,7 @@ async def run_cycle(body: RunRequest):
         finally:
             _running_tasks.pop(cycle_id, None)
 
-    _log_queues[cycle_id] = asyncio.Queue()
+    create_queue(cycle_id)
     task = asyncio.create_task(_run())
     _running_tasks[cycle_id] = task
     asyncio.create_task(_cleanup_queue(cycle_id, delay=300))
@@ -300,7 +304,7 @@ async def stream_logs(cycle_id: Optional[str] = None):
     """
 
     async def event_generator():
-        queue = _log_queues.get(cycle_id) if cycle_id else None
+        queue = get_queue(cycle_id) if cycle_id else None
 
         yield _sse_event({"event": "connected", "cycle_id": cycle_id})
 
@@ -531,70 +535,9 @@ async def reject_current_article(cycle_id: str):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _sse_event(data: dict) -> str:
-    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-
-def _emit_log(cycle_id: str, level: str, event: str):
-    """
-    Publie un log dans la queue SSE du cycle, dans le logger structuré, et le
-    persiste en base (fire-and-forget) pour survivre à un redémarrage backend
-    et permettre le replay d'historique à la connexion SSE.
-    """
-    payload = {"cycle_id": cycle_id[:8], "level": level, "event": event}
-    logger.info("cycle_event", cycle_id=cycle_id[:8], msg=event)
-    queue = _log_queues.get(cycle_id)
-    if queue is not None:
-        try:
-            queue.put_nowait(payload)
-        except asyncio.QueueFull:
-            pass
-    asyncio.create_task(_persist_log(cycle_id, level, event))
-
-
-def _close_stream(cycle_id: str):
-    """Ferme proprement la queue SSE d'un cycle (envoie le sentinel de fin)."""
-    q = _log_queues.get(cycle_id)
-    if q:
-        try:
-            q.put_nowait(_SENTINEL)
-        except asyncio.QueueFull:
-            pass
-
-
-async def _persist_log(cycle_id: str, level: str, event: str):
-    try:
-        from db.connection import get_db
-        async with get_db() as db:
-            await db.execute(
-                text("INSERT INTO cycle_logs (cycle_id, level, event) VALUES (:cid, :level, :event)"),
-                {"cid": cycle_id, "level": level, "event": event},
-            )
-    except Exception as e:
-        logger.warning("persist_log_failed", cycle_id=cycle_id, error=str(e))
-
-
-async def _get_cycle_logs_history(cycle_id: str, limit: int = 200) -> list[dict]:
-    """Logs persistés pour ce cycle — rejoués en tête de flux SSE."""
-    try:
-        from db.connection import get_db
-        async with get_db() as db:
-            result = await db.execute(
-                text("""
-                    SELECT level, event, created_at FROM cycle_logs
-                    WHERE cycle_id = :cid ORDER BY created_at ASC LIMIT :limit
-                """),
-                {"cid": cycle_id, "limit": limit},
-            )
-            rows = result.mappings().all()
-        return [
-            {"cycle_id": cycle_id[:8], "level": r["level"], "event": r["event"]}
-            for r in rows
-        ]
-    except Exception as e:
-        logger.warning("cycle_logs_history_failed", cycle_id=cycle_id, error=str(e))
-        return []
+# _sse_event, _emit_log, _close_stream, _get_cycle_logs_history sont importés
+# de core/cycle_events.py (voir en tête de fichier) — définis là-bas pour être
+# également appelables depuis agent/nodes/*.py sans import circulaire.
 
 
 async def _get_active_cycle_from_db() -> Optional[dict]:
@@ -639,10 +582,10 @@ async def _get_active_cycle_from_db() -> Optional[dict]:
 async def _cleanup_queue(cycle_id: str, delay: int = 300):
     """Envoie le sentinel de fin puis supprime la queue après `delay` secondes."""
     await asyncio.sleep(delay)
-    if cycle_id in _log_queues:
+    if get_queue(cycle_id) is not None:
         _close_stream(cycle_id)
         await asyncio.sleep(30)
-        _log_queues.pop(cycle_id, None)
+        drop_queue(cycle_id)
 
 
 async def _persist_cycle(cycle_id: str, mode: str):

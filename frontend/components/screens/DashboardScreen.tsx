@@ -37,7 +37,7 @@ export function DashboardScreen() {
   // contenter de naviguer vers /agent. Le cycle_id est partagé via
   // localStorage : si l'utilisateur navigue vers /agent pendant l'attente,
   // cet écran reprend le suivi du même cycle sans le relancer.
-  const { isBusy, running, isRunning, runCycle, cancelCycle, cancelling } = useLaunchCycle()
+  const { isBusy, running, isRunning, runCycle, cancelCycle, cancelling, liveMessage } = useLaunchCycle()
 
   const fetchDashboard = useCallback(async (): Promise<DashboardData> => {
     const [pendingRes, recentRes, cycleRes] = await Promise.allSettled([
@@ -202,6 +202,7 @@ export function DashboardScreen() {
         isRunning={isRunning}
         cancelling={cancelling}
         onCancel={() => cancelCycle(undefined as unknown as void)}
+        liveMessage={liveMessage}
       />
     </div>
   )

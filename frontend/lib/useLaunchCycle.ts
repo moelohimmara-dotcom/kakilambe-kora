@@ -4,7 +4,16 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useToast } from '@/lib/contexts/ToastContext'
 import { agentApi, articleApi } from '@/lib/api'
-import { useAsync, useMutation, useInterval } from '@/lib/hooks'
+import { useAsync, useMutation, useInterval, useSSE } from '@/lib/hooks'
+
+// Message SSE réel poussé par core/cycle_events.py (emit_log) depuis les
+// nœuds du pipeline — distinct des trames de contrôle du flux (connected,
+// heartbeat, history_end, done) qui n'ont pas de champ `level`.
+interface CycleLogMessage {
+  cycle_id: string
+  level: string
+  event: string
+}
 
 // Extrait de AgentScreen.tsx (mécaniquement, sans réécriture) pour que
 // /dashboard puisse déclencher le même vrai lancement de cycle que /agent
@@ -44,6 +53,13 @@ export function useLaunchCycle() {
   // très rapide peut donc déclencher deux appels avant que le bouton ne se
   // désactive visuellement.
   const hitlActionInFlight = useRef(false)
+  // Dernier message de progression réel reçu via SSE (/api/agent/stream) —
+  // remplace la rotation de messages factices de CycleLaunchOverlay dès que
+  // le pipeline a effectivement commencé à produire des événements (scraper,
+  // sélection, rédaction, illustration). null tant qu'aucun événement réel
+  // n'est encore arrivé (ex. les toutes premières secondes) — l'overlay
+  // retombe alors sur sa rotation de messages génériques.
+  const [liveMessage, setLiveMessage] = useState<string | null>(null)
   // Évite de relancer une redirection si l'utilisateur revient sur /agent
   // après avoir déjà été redirigé pour ce même cycle (ex: navigation
   // arrière), et se réinitialise à chaque nouveau lancement de cycle.
@@ -219,6 +235,7 @@ export function useLaunchCycle() {
     const newCycleId = _generateCycleId()
     redirectedForCycleRef.current = null
     pendingSinceRef.current = null
+    setLiveMessage(null)
     setCurrentCycleId(newCycleId)
     localStorage.setItem(CYCLE_ID_STORAGE_KEY, newCycleId)
     try {
@@ -300,11 +317,27 @@ export function useLaunchCycle() {
   // éviter un double appel concurrent depuis le même onglet.
   const isBusy = running || isRunning
 
+  // Flux SSE de progression réelle — un seul événement à la fois nous
+  // intéresse ici (le dernier), CycleLaunchOverlay se contente de l'afficher
+  // à la place de sa rotation de messages génériques. Fermé dès que isBusy
+  // redevient false (currentCycleId passe à null via runCycle/cancelCycle),
+  // useSSE se charge alors de couper la connexion EventSource.
+  const onCycleLogMessage = useCallback((data: CycleLogMessage) => {
+    if (data && typeof data.level === 'string' && typeof data.event === 'string') {
+      setLiveMessage(data.event)
+    }
+  }, [])
+  useSSE<CycleLogMessage>(
+    isBusy && currentCycleId ? agentApi.streamUrl(currentCycleId) : null,
+    onCycleLogMessage,
+  )
+
   return {
     cycle, currentCycleId,
     isRunning, isPaused, isFailed, isBusy,
     pendingArticle,
     runCycle, running,
     cancelCycle, cancelling,
+    liveMessage,
   }
 }

@@ -20,12 +20,18 @@ const _LOADING_MESSAGES = [
 ]
 
 export function CycleLaunchOverlay({
-  isBusy, isRunning, cancelling, onCancel,
+  isBusy, isRunning, cancelling, onCancel, liveMessage,
 }: {
   isBusy: boolean
   isRunning: boolean
   cancelling: boolean
   onCancel: () => void
+  // Dernier événement réel reçu via SSE (/api/agent/stream — cf.
+  // useLaunchCycle) — remplace la rotation de messages génériques dès que le
+  // pipeline a effectivement commencé à produire des événements. Optionnel :
+  // les écrans qui n'ont pas encore été migrés vers useLaunchCycle gardent
+  // l'ancien comportement (rotation uniquement) en omettant cette prop.
+  liveMessage?: string | null
 }) {
   // Rotation des micro-messages d'attente — fade-out (250ms) puis changement
   // de message puis fade-in, toutes les ~1.3s tant que l'écran de transition
@@ -61,10 +67,13 @@ export function CycleLaunchOverlay({
       <div className="flex flex-col items-center text-center px-6 max-w-md">
         <Spinner size="lg" />
         <h2
-          className={`font-heading font-semibold text-[16px] text-anthracite mt-6 mb-2 transition-opacity duration-300 ${isRunning && loadingMsgFading ? 'opacity-0' : 'opacity-100'}`}
+          className={`font-heading font-semibold text-[16px] text-anthracite mt-6 mb-2 transition-opacity duration-300 ${isRunning && !liveMessage && loadingMsgFading ? 'opacity-0' : 'opacity-100'}`}
         >
           {isRunning
-            ? _LOADING_MESSAGES[loadingMsgIndex]
+            // Message réel (SSE, /api/agent/stream) dès qu'un événement de
+            // pipeline est arrivé — sinon repli sur la rotation générique
+            // (ex. les toutes premières secondes, avant node_scraper_start).
+            ? liveMessage ?? _LOADING_MESSAGES[loadingMsgIndex]
             : "Article rédigé — préparation de la page de validation…"}
         </h2>
         <p className="font-heading text-[13px] text-gray-dk mb-6">

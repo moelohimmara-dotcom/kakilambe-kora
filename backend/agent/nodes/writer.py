@@ -11,6 +11,7 @@ import random
 import re
 from agent.state import KoraState
 from agent.state import ArticleKORA
+from core.cycle_events import emit_log
 from core.llm_router import llm_router
 from core.logger import logger
 from db.connection import get_db
@@ -362,6 +363,7 @@ async def run(state: KoraState) -> KoraState:
         index=idx,
         titre=current.get("title", "?"),
     )
+    emit_log(state["cycle_id"], "INFO", f"Rédaction en cours : « {current.get('title', '?')} »")
 
     try:
         article_obj = await _write_with_retry(current)
@@ -377,6 +379,7 @@ async def run(state: KoraState) -> KoraState:
             db_id=db_id,
             titre=article_obj.titre,
         )
+        emit_log(state["cycle_id"], "INFO", f"Article rédigé : « {article_obj.titre} »")
 
         return {
             **state,

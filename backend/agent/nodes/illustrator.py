@@ -9,6 +9,7 @@ de régénération HITL (api/article_routes.py) sans dupliquer la logique.
 from typing import Optional
 
 from agent.state import KoraState
+from core.cycle_events import emit_log
 from core.logger import logger
 from db.connection import get_db
 from sqlalchemy import text
@@ -78,6 +79,7 @@ async def run(state: KoraState) -> KoraState:
     db_id = article.get("db_id", "")
 
     logger.info("node_illustrator_start", cycle_id=state["cycle_id"], db_id=db_id)
+    emit_log(state["cycle_id"], "INFO", "Génération de l'image d'illustration…")
 
     try:
         image_url, wp_media_id, wp_image_src = await generate_and_upload_image(
@@ -93,12 +95,17 @@ async def run(state: KoraState) -> KoraState:
             wp_media_id=wp_media_id,
             wp_image_src=wp_image_src,
         )
+        if wp_media_id:
+            emit_log(state["cycle_id"], "INFO", "Image générée et envoyée sur WordPress")
+        else:
+            emit_log(state["cycle_id"], "WARN", "Image générée (envoi WordPress à réessayer)")
 
         updated_article = {**article, "wp_media_id": wp_media_id, "wp_image_src": wp_image_src or image_url}
         return {**state, "image_url": image_url, "wp_media_id": wp_media_id, "generated_article": updated_article}
 
     except Exception as e:
         logger.error("node_illustrator_failed", cycle_id=state["cycle_id"], error=str(e))
+        emit_log(state["cycle_id"], "WARN", "Échec de la génération d'image — l'article reste valide sans illustration")
         errors = list(state.get("errors", []))
         errors.append(f"Illustrator: {e}")
         return {**state, "image_url": None, "wp_media_id": None, "errors": errors}

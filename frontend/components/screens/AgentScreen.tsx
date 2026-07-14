@@ -17,6 +17,7 @@ export function AgentScreen() {
     pendingArticle,
     runCycle, running,
     cancelCycle, cancelling,
+    liveMessage,
   } = useLaunchCycle()
 
   // Gamification (nouveau périmètre) — indicateur discret, indépendant du
@@ -131,6 +132,7 @@ export function AgentScreen() {
         isRunning={isRunning}
         cancelling={cancelling}
         onCancel={() => cancelCycle(undefined as unknown as void)}
+        liveMessage={liveMessage}
       />
     </div>
   )

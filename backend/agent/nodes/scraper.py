@@ -21,6 +21,7 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import List
 from agent.state import KoraState
+from core.cycle_events import emit_log
 from core.logger import logger
 from db.connection import get_db
 from sqlalchemy import text
@@ -158,6 +159,7 @@ async def _fetch_content(url: str) -> str:
 
 async def run(state: KoraState) -> KoraState:
     logger.info("node_scraper_start", cycle_id=state["cycle_id"])
+    emit_log(state["cycle_id"], "INFO", "Recherche des dernières actualités sur les sources configurées…")
 
     from integrations.tavily_client import tavily_client
 
@@ -269,6 +271,11 @@ async def run(state: KoraState) -> KoraState:
         async with semaphore:
             return await enrich(article)
 
+    if unique:
+        emit_log(
+            state["cycle_id"], "INFO",
+            f"{len(unique)} article(s) candidat(s) trouvé(s) — extraction du contenu complet…",
+        )
     enriched = await asyncio.gather(*[enrich_limited(a) for a in unique])
 
     # Filtre : garder uniquement les articles avec contenu substantiel
@@ -286,5 +293,6 @@ async def run(state: KoraState) -> KoraState:
         unique=len(unique),
         valid=len(valid),
     )
+    emit_log(state["cycle_id"], "INFO", f"{len(valid)} article(s) exploitable(s) collecté(s) — sélection en cours…")
 
     return {**state, "raw_sources": valid}

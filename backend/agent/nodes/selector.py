@@ -18,6 +18,7 @@ utilisent des domaines .com, pas l'extension .gn.
 import json
 from typing import List
 from agent.state import KoraState
+from core.cycle_events import emit_log
 from core.llm_router import llm_router
 from core.logger import logger
 from db.connection import get_db
@@ -203,6 +204,7 @@ async def run(state: KoraState) -> KoraState:
             selected=len(selected),
             reason=data.get("reason", ""),
         )
+        emit_log(state["cycle_id"], "INFO", f"{len(selected)} article(s) retenu(s) pour rédaction")
     except Exception as e:
         logger.error("node_selector_pass1_failed", error=str(e))
         selected = raw[:3]
@@ -245,6 +247,7 @@ async def run(state: KoraState) -> KoraState:
             after=len(aggregated),
             dedup_summary=dedup_summary,
         )
+        emit_log(state["cycle_id"], "INFO", f"Sélection finalisée — {len(aggregated)} article(s) à rédiger")
         processed_urls = [a.get("url", "") for a in selected]
         await _mark_raw_feeds_processed(state["cycle_id"], processed_urls)
         return {**state, "selected_articles": aggregated, "article_index": 0}
