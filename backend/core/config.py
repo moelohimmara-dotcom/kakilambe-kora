@@ -13,15 +13,15 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
 
     # ── LLM Providers ───────────────────────────────────────────────────────
+    # Gemini abandonné (décision explicite du propriétaire) — retiré de la
+    # chaîne de fallback et du routeur (core/llm_router.py).
     GROQ_API_KEY: str = ""
-    GEMINI_API_KEY: str = ""
     CEREBRAS_API_KEY: str = ""
     OPENROUTER_API_KEY: str = ""
 
-    LLM_PROVIDER_ORDER: str = "groq,gemini,cerebras,openrouter"
+    LLM_PROVIDER_ORDER: str = "groq,cerebras,openrouter"
     LLM_PRIMARY_MODEL: str = "groq/llama-3.3-70b-versatile"
     LLM_FALLBACK_MODELS: str = (
-        "gemini/gemini-2.0-flash,"
         "cerebras/llama-3.3-70b,"
         "openrouter/meta-llama/llama-3.1-8b-instruct:free"
     )
@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # en cas d'échec (cf. agent/nodes/scraper.py).
     TAVILY_API_KEY: str = ""
     FIRECRAWL_API_KEY: str = ""
+
+    # ── Génération d'image ───────────────────────────────────────────────────
+    # pollinations.ai fonctionne sans clé, mais un token relève les limites de
+    # débit et garantit le rendu sans logo (nologo=true) de façon fiable.
+    POLLINATIONS_API_KEY: str = ""
 
     # ── WordPress ────────────────────────────────────────────────────────────
     WP_BASE_URL: str = "https://kakilambe.com"

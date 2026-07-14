@@ -1,5 +1,5 @@
 """
-KoraLLMRouter — fallback chain groq → gemini → cerebras → openrouter
+KoraLLMRouter — fallback chain groq → cerebras → openrouter
 State persistence : in-memory (sync) + Supabase provider_states (async)
 Pas de Redis requis.
 """
@@ -25,12 +25,6 @@ PROVIDER_CONFIG = {
         "rpm_limit": 30,
         "api_key_env": "GROQ_API_KEY",
     },
-    "gemini": {
-        "primary_model": "gemini/gemini-2.0-flash",
-        "daily_token_limit": 1_000_000,
-        "rpm_limit": 15,
-        "api_key_env": "GEMINI_API_KEY",
-    },
     "cerebras": {
         # "cerebras/llama3.3-70b" renvoyait une 404 en production — pas une
         # erreur de nommage : Cerebras a retiré Llama 3.3 70B de son offre
@@ -52,7 +46,7 @@ PROVIDER_CONFIG = {
     },
 }
 
-PROVIDER_ORDER = ["groq", "gemini", "cerebras", "openrouter"]
+PROVIDER_ORDER = ["groq", "cerebras", "openrouter"]
 
 
 class KoraLLMRouter:
@@ -390,8 +384,6 @@ class KoraLLMRouter:
     def _set_litellm_keys(self):
         if settings.GROQ_API_KEY:
             litellm.groq_key = settings.GROQ_API_KEY
-        if settings.GEMINI_API_KEY:
-            litellm.gemini_key = settings.GEMINI_API_KEY
         if settings.CEREBRAS_API_KEY:
             litellm.cerebras_key = settings.CEREBRAS_API_KEY
         if settings.OPENROUTER_API_KEY:

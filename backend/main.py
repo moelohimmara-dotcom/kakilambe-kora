@@ -136,7 +136,6 @@ async def health_wordpress():
 async def health_provider(provider: str):
     keys = {
         "groq": settings.GROQ_API_KEY,
-        "gemini": settings.GEMINI_API_KEY,
         "cerebras": settings.CEREBRAS_API_KEY,
         "openrouter": settings.OPENROUTER_API_KEY,
     }

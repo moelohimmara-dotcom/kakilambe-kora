@@ -3,6 +3,7 @@ from typing import Optional
 
 import httpx
 
+from core.config import settings
 from core.logger import logger
 
 
@@ -23,6 +24,11 @@ class ImageGenClient:
             f"https://image.pollinations.ai/prompt/{encoded}"
             "?width=1280&height=720&model=flux&nologo=true&nofeed=true"
         )
+        # Token en paramètre d'URL (pas en header) : wordpress_client.py
+        # retélécharge cette même URL telle quelle pour l'upload WordPress —
+        # un header ne survivrait pas à ce second appel.
+        if settings.POLLINATIONS_API_KEY:
+            url += f"&token={settings.POLLINATIONS_API_KEY}"
 
         for attempt in range(3):
             try:
