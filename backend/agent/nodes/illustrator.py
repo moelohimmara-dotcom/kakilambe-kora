@@ -6,6 +6,8 @@ de l'article. Upload sur WordPress Media API → récupère l'ID média.
 generate_and_upload_image() est extrait pour être réutilisé par l'endpoint
 de régénération HITL (api/article_routes.py) sans dupliquer la logique.
 """
+from typing import Optional
+
 from agent.state import KoraState
 from core.logger import logger
 from db.connection import get_db
@@ -31,23 +33,38 @@ def _slugify(titre: str) -> str:
     return "".join(c if c.isalnum() else "-" for c in slug)
 
 
-async def generate_and_upload_image(image_prompt: str, titre: str) -> tuple[str, int, str]:
+async def generate_and_upload_image(image_prompt: str, titre: str) -> tuple[str, Optional[int], Optional[str]]:
     """
     Génère une image et l'upload sur WordPress. Retourne (image_url, wp_media_id, wp_image_src).
-    Lève une exception si la génération ou l'upload échoue — laisse l'appelant décider
-    du repli (le nœud graphe dégrade proprement, l'endpoint HITL renvoie une erreur claire).
+    Lève une exception SEULEMENT si la génération pollinations.ai échoue —
+    c'est la seule étape sans laquelle il n'y a rien à montrer à l'éditeur.
+
+    Incident réel (cycle du 2026-07-14) : un wp_url mal configuré
+    ("kakilambe.com" sans schéma) faisait échouer l'upload WordPress
+    (httpx: "Request URL is missing an 'http://' or 'https://' protocol"),
+    et le code précédent laissait cette exception remonter jusqu'à run(),
+    qui jetait alors AUSSI l'image_url pollinations pourtant déjà générée
+    avec succès — l'éditeur se retrouvait sans aucune image alors qu'une
+    existait. L'upload WordPress est maintenant isolé : son échec dégrade
+    (pas de wp_media_id/wp_image_src, l'éditeur peut réessayer plus tard
+    depuis /articles) sans perdre l'image déjà obtenue.
     """
     from integrations.image_gen_client import image_gen_client
     image_url = await image_gen_client.generate(image_prompt)
     if not image_url:
         raise RuntimeError("Génération d'image vide (pollinations.ai)")
 
-    from integrations.wordpress_client import wp_client
-    wp_media_id, wp_image_src = await wp_client.upload_media(
-        image_url,
-        f"{_slugify(titre)}.jpg",
-        alt_text=(titre or "")[:80],
-    )
+    try:
+        from integrations.wordpress_client import wp_client
+        wp_media_id, wp_image_src = await wp_client.upload_media(
+            image_url,
+            f"{_slugify(titre)}.jpg",
+            alt_text=(titre or "")[:80],
+        )
+    except Exception as e:
+        logger.warning("illustrator_wp_upload_failed", error=str(e))
+        wp_media_id, wp_image_src = None, None
+
     return image_url, wp_media_id, wp_image_src
 
 

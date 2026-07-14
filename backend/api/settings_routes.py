@@ -58,6 +58,17 @@ async def update_settings(body: SettingsPatch):
     updates = {k: v for k, v in body.dict().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
+    # Incident réel (cycle du 2026-07-14) : "kakilambe.com" enregistré sans
+    # schéma via ce formulaire a fait échouer tout l'upload WordPress
+    # (httpx: "Request URL is missing an 'http://' or 'https://' protocol"),
+    # perdant au passage l'image déjà générée par pollinations.ai (cf.
+    # agent/nodes/illustrator.py). Normaliser ici plutôt que de faire
+    # confiance à la saisie évite toute récidive.
+    if "wp_url" in updates and updates["wp_url"]:
+        url = updates["wp_url"].strip().rstrip("/")
+        if url and not url.startswith(("http://", "https://")):
+            url = f"https://{url}"
+        updates["wp_url"] = url
     async with get_db() as db:
         for key, value in updates.items():
             await db.execute(
