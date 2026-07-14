@@ -70,6 +70,9 @@ export interface SystemPrompt {
   is_default: boolean
   is_builtin: boolean
   temperature: number
+  // Prompt principal (KORA Journaliste) — jamais modifiable depuis le
+  // frontend, vérifié côté serveur sur chaque route de mutation.
+  frontend_locked: boolean
 }
 
 export interface KpiData {

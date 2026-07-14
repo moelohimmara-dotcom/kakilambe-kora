@@ -120,6 +120,21 @@ export const settingsApi = {
       `/api/settings/prompts/${id}/reset`,
       { method: 'POST' }
     ),
+  // Fait évoluer un prompt SECONDAIRE via une instruction en langage
+  // naturel — rejeté par le serveur (403) si le prompt ciblé est
+  // frontend_locked, quelle que soit l'instruction envoyée.
+  refinePrompt: (id: string, instruction: string) =>
+    request<{ content: string; temperature: number }>(
+      `/api/settings/prompts/${id}/refine`,
+      { method: 'POST', body: JSON.stringify({ instruction }) }
+    ),
+  // Dérive une version cohérente d'un prompt secondaire à partir du
+  // contenu ACTUEL du prompt principal (pas un texte d'origine figé).
+  restorePromptFromPrimary: (id: string) =>
+    request<{ content: string; temperature: number }>(
+      `/api/settings/prompts/${id}/restore-from-primary`,
+      { method: 'POST' }
+    ),
   testEmail: () =>
     request<{ sent: boolean; to: string; provider: string }>('/api/settings/test-email', { method: 'POST' }),
   sources: () => request<import('./types').RSSSource[]>('/api/settings/sources'),

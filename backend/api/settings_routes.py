@@ -4,6 +4,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from typing import Optional
 
+from core.logger import logger
 from db.connection import get_db
 
 router = APIRouter()
@@ -90,12 +91,39 @@ async def update_settings(body: SettingsPatch):
 
 
 # ── Prompts ──────────────────────────────────────────────────────────────────
+# Verrouillage backend-only (frontend_locked) : le prompt principal "KORA
+# Journaliste" ne doit jamais pouvoir être modifié depuis une action initiée
+# par le frontend, sous aucune forme — vérifié ici, côté serveur, sur CHAQUE
+# route de mutation (PATCH, reset, refine, restore-from-primary), jamais
+# seulement au niveau de l'affichage du bouton "Modifier" dans l'UI (qui
+# serait contournable via un appel API direct). Toute tentative est
+# journalisée pour audit.
+
+async def _reject_if_locked(db, prompt_id: str) -> None:
+    result = await db.execute(
+        text("SELECT name, frontend_locked FROM system_prompts WHERE id = :id"),
+        {"id": prompt_id},
+    )
+    row = result.mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Prompt non trouvé")
+    if row["frontend_locked"]:
+        logger.warning(
+            "prompt_frontend_lock_violation",
+            prompt_id=prompt_id,
+            name=row["name"],
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Ce prompt est réservé aux modifications backend (accès direct uniquement).",
+        )
+
 
 @router.get("/prompts")
 async def list_prompts():
     async with get_db() as db:
         result = await db.execute(
-            text("SELECT id, name, content, is_default, is_builtin, temperature FROM system_prompts")
+            text("SELECT id, name, content, is_default, is_builtin, temperature, frontend_locked FROM system_prompts")
         )
         rows = result.mappings().all()
     return [dict(r) for r in rows]
@@ -144,6 +172,7 @@ async def update_prompt(prompt_id: str, body: PromptPatch):
     set_clause = ", ".join(f"{k} = :{k}" for k in fields)
     fields["id"] = prompt_id
     async with get_db() as db:
+        await _reject_if_locked(db, prompt_id)
         result = await db.execute(
             text(f"UPDATE system_prompts SET {set_clause}, updated_at = now() WHERE id = :id RETURNING id"),
             fields,
@@ -181,6 +210,7 @@ _BUILTIN_PROMPT_DEFAULTS = {
 @router.post("/prompts/{prompt_id}/reset")
 async def reset_prompt(prompt_id: str):
     async with get_db() as db:
+        await _reject_if_locked(db, prompt_id)
         result = await db.execute(
             text("SELECT name, is_builtin FROM system_prompts WHERE id = :id"),
             {"id": prompt_id},
@@ -199,6 +229,119 @@ async def reset_prompt(prompt_id: str):
             {"content": content, "temp": temperature, "id": prompt_id},
         )
     return {"reset": True, "content": content, "temperature": temperature}
+
+
+class PromptRefineRequest(BaseModel):
+    instruction: str
+
+
+@router.post("/prompts/{prompt_id}/refine")
+async def refine_prompt(prompt_id: str, body: PromptRefineRequest):
+    """
+    Fait évoluer un prompt SECONDAIRE via une instruction en langage naturel
+    (ex. "rends le ton plus formel", "corrige tel point"). Un seul mécanisme
+    sert aussi bien la correction ponctuelle que l'amélioration continue :
+    chaque appel réécrit à partir du contenu ACTUEL (déjà enrichi par les
+    appels précédents), donc des instructions successives s'accumulent
+    naturellement au fil des cycles sans nécessiter un second système.
+    Verrouillage backend-only appliqué en premier (cf. _reject_if_locked).
+    """
+    if not body.instruction.strip():
+        raise HTTPException(status_code=400, detail="Instruction vide")
+
+    async with get_db() as db:
+        await _reject_if_locked(db, prompt_id)
+        result = await db.execute(
+            text("SELECT name, content, temperature FROM system_prompts WHERE id = :id"),
+            {"id": prompt_id},
+        )
+        row = result.mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Prompt non trouvé")
+
+        from core.llm_router import llm_router
+        meta_prompt = (
+            "Tu édites un prompt système pour un agent IA journalistique. "
+            f"Voici le prompt actuel du rôle « {row['name']} » :\n---\n{row['content']}\n---\n\n"
+            f"Applique cette instruction : {body.instruction.strip()}\n\n"
+            "Réponds UNIQUEMENT avec le texte complet du nouveau prompt "
+            "(pas d'explication, pas de guillemets, pas de préambule) — il "
+            "remplacera intégralement l'ancien."
+        )
+        try:
+            resp = await llm_router.complete(
+                messages=[{"role": "user", "content": meta_prompt}],
+                temperature=0.3,
+                max_tokens=1024,
+            )
+            new_content = resp.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error("prompt_refine_llm_failed", prompt_id=prompt_id, error=str(e))
+            raise HTTPException(status_code=502, detail=f"Échec de la réécriture : {e}")
+
+        if not new_content:
+            raise HTTPException(status_code=502, detail="Réécriture vide renvoyée par le modèle")
+
+        await db.execute(
+            text("UPDATE system_prompts SET content = :content, updated_at = now() WHERE id = :id"),
+            {"content": new_content, "id": prompt_id},
+        )
+    return {"content": new_content, "temperature": row["temperature"]}
+
+
+@router.post("/prompts/{prompt_id}/restore-from-primary")
+async def restore_prompt_from_primary(prompt_id: str):
+    """
+    Réinitialise un prompt SECONDAIRE corrompu/incohérent en dérivant une
+    version cohérente à partir du prompt principal ("KORA Journaliste",
+    frontend_locked=true) — plutôt que de revenir à un texte d'origine figé
+    (cf. reset_prompt), utile si ce prompt principal a lui-même évolué
+    depuis la création du prompt secondaire.
+    """
+    async with get_db() as db:
+        await _reject_if_locked(db, prompt_id)
+        target = await db.execute(
+            text("SELECT name, temperature FROM system_prompts WHERE id = :id"),
+            {"id": prompt_id},
+        )
+        target_row = target.mappings().first()
+        if not target_row:
+            raise HTTPException(status_code=404, detail="Prompt non trouvé")
+
+        primary = await db.execute(
+            text("SELECT content FROM system_prompts WHERE frontend_locked = true AND is_default = true LIMIT 1")
+        )
+        primary_row = primary.mappings().first()
+        if not primary_row:
+            raise HTTPException(status_code=404, detail="Prompt principal introuvable")
+
+        from core.llm_router import llm_router
+        meta_prompt = (
+            f"Voici le prompt principal (ligne éditoriale de référence) :\n---\n{primary_row['content']}\n---\n\n"
+            f"Dérive-en un prompt système spécialisé pour le rôle « {target_row['name']} », "
+            "cohérent avec cette ligne éditoriale mais centré sur sa mission spécifique "
+            "(pas la rédaction d'articles complets, sauf si le rôle l'exige explicitement). "
+            "Réponds UNIQUEMENT avec le texte complet du nouveau prompt."
+        )
+        try:
+            resp = await llm_router.complete(
+                messages=[{"role": "user", "content": meta_prompt}],
+                temperature=0.3,
+                max_tokens=1024,
+            )
+            new_content = resp.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error("prompt_restore_from_primary_llm_failed", prompt_id=prompt_id, error=str(e))
+            raise HTTPException(status_code=502, detail=f"Échec de la dérivation : {e}")
+
+        if not new_content:
+            raise HTTPException(status_code=502, detail="Dérivation vide renvoyée par le modèle")
+
+        await db.execute(
+            text("UPDATE system_prompts SET content = :content, updated_at = now() WHERE id = :id"),
+            {"content": new_content, "id": prompt_id},
+        )
+    return {"content": new_content, "temperature": target_row["temperature"]}
 
 
 # ── Sources RSS ───────────────────────────────────────────────────────────────

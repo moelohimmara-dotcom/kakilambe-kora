@@ -394,6 +394,8 @@ function PromptsTab() {
   const [editing, setEditing] = useState<string | null>(null)
   const [editContent, setEditContent] = useState('')
   const [editTemp, setEditTemp] = useState(0.7)
+  const [refining, setRefining] = useState<string | null>(null)
+  const [instruction, setInstruction] = useState('')
 
   const fetchPrompts = useCallback(() => settingsApi.prompts(), [])
   const { data: prompts, loading, refetch } = useAsync<SystemPrompt[]>(fetchPrompts)
@@ -417,6 +419,38 @@ function PromptsTab() {
     }
   })
 
+  // Fait évoluer un prompt secondaire via une instruction en langage naturel
+  // (correction ponctuelle ou amélioration continue — le même mécanisme sert
+  // les deux : chaque appel réécrit à partir du contenu ACTUEL, donc des
+  // instructions successives s'accumulent naturellement au fil des cycles).
+  const { mutate: refine, loading: refiningInFlight } = useMutation(async (id: string) => {
+    if (!instruction.trim()) return
+    try {
+      const result = await settingsApi.refinePrompt(id, instruction.trim())
+      show('Prompt mis à jour selon ton instruction', 'success')
+      setInstruction('')
+      setRefining(null)
+      if (editing === id) { setEditContent(result.content); setEditTemp(result.temperature) }
+      await refetch()
+    } catch (e) {
+      show(e instanceof Error ? e.message : "Impossible de faire évoluer ce prompt", 'error')
+    }
+  })
+
+  // Dérive une version cohérente à partir du prompt principal ACTUEL (pas un
+  // texte d'origine figé) — utile si ce prompt secondaire est devenu
+  // incohérent avec la ligne éditoriale de référence.
+  const { mutate: restoreFromPrimary, loading: restoringFromPrimary } = useMutation(async (id: string) => {
+    try {
+      const result = await settingsApi.restorePromptFromPrimary(id)
+      show('Prompt restauré depuis le prompt principal', 'success')
+      if (editing === id) { setEditContent(result.content); setEditTemp(result.temperature) }
+      await refetch()
+    } catch (e) {
+      show(e instanceof Error ? e.message : 'Impossible de restaurer ce prompt', 'error')
+    }
+  })
+
   if (loading) return <div className="flex justify-center py-8"><Spinner /></div>
 
   return (
@@ -428,21 +462,33 @@ function PromptsTab() {
               <h3 className="font-heading font-semibold text-[14px] text-anthracite">{prompt.name}</h3>
               {prompt.is_builtin && <Badge variant="blue">Système</Badge>}
               {prompt.is_default && <Badge variant="sage">Défaut</Badge>}
+              {prompt.frontend_locked && <Badge variant="danger">🔒 Verrouillé</Badge>}
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setEditing(prompt.id)
-                setEditContent(prompt.content)
-                setEditTemp(prompt.temperature)
-              }}
-            >
-              Modifier
-            </Button>
+            {!prompt.frontend_locked && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setEditing(prompt.id)
+                  setEditContent(prompt.content)
+                  setEditTemp(prompt.temperature)
+                }}
+              >
+                Modifier
+              </Button>
+            )}
           </div>
 
-          {editing === prompt.id ? (
+          {prompt.frontend_locked ? (
+            <>
+              <p className="font-mono text-[11px] text-gray-dk bg-gray-pale rounded-md p-3 line-clamp-3">
+                {prompt.content}
+              </p>
+              <p className="font-heading text-[11px] text-gray-med mt-2">
+                Prompt principal — modifiable uniquement par accès backend direct (script), jamais depuis cette interface.
+              </p>
+            </>
+          ) : editing === prompt.id ? (
             <div className="space-y-3">
               <textarea
                 value={editContent}
@@ -467,7 +513,7 @@ function PromptsTab() {
                   aria-valuenow={editTemp}
                 />
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 <Button variant="confirm" size="sm" loading={saving} onClick={() => save(prompt.id)}>
                   Sauvegarder
                 </Button>
@@ -484,6 +530,57 @@ function PromptsTab() {
                     }}
                   >
                     Restaurer par défaut
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  loading={restoringFromPrimary}
+                  onClick={() => {
+                    if (confirm('Dériver une nouvelle version de ce prompt à partir du prompt principal actuel ? Le contenu actuel sera remplacé.')) {
+                      restoreFromPrimary(prompt.id)
+                    }
+                  }}
+                >
+                  Restaurer depuis le prompt principal
+                </Button>
+              </div>
+
+              {/* Évolution guidée par instruction — sert aussi bien la
+                  correction ponctuelle que l'amélioration continue au fil
+                  des cycles (cf. commentaire sur `refine` ci-dessus). */}
+              <div className="pt-3 border-t border-gray-light">
+                {refining === prompt.id ? (
+                  <div className="space-y-2">
+                    <label htmlFor={`instr-${prompt.id}`} className="block font-heading text-[12px] font-semibold text-gray-dk">
+                      Décris le changement souhaité, en langage naturel
+                    </label>
+                    <textarea
+                      id={`instr-${prompt.id}`}
+                      value={instruction}
+                      onChange={e => setInstruction(e.target.value)}
+                      rows={2}
+                      placeholder="Ex : rends le ton plus formel · affine la longueur des méta-descriptions pour les prochains cycles…"
+                      className="form-input text-[13px] resize-y"
+                    />
+                    <div className="flex gap-2">
+                      <Button
+                        variant="confirm"
+                        size="sm"
+                        loading={refiningInFlight}
+                        disabled={!instruction.trim()}
+                        onClick={() => refine(prompt.id)}
+                      >
+                        Appliquer
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => { setRefining(null); setInstruction('') }}>
+                        Annuler
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={() => setRefining(prompt.id)}>
+                    Faire évoluer via une instruction…
                   </Button>
                 )}
               </div>
