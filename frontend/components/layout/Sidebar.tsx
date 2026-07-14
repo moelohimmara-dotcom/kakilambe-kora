@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useSidebar } from '@/lib/contexts/SidebarContext'
 import { Badge } from '@/components/ui/Badge'
+import { useAsync } from '@/lib/hooks'
+import { accountApi } from '@/lib/api'
 
 interface NavItem {
   href: string
@@ -59,6 +61,10 @@ export function Sidebar() {
   const router = useRouter()
   const { collapsed } = useSidebar()
   const [loggingOut, setLoggingOut] = useState(false)
+  // Remplace "Éditeur / kakilambe.com" (texte JSX en dur, sans donnée
+  // derrière avant ce correctif) par le vrai profil backend — cf.
+  // db/migrations/010_users_table.sql et /api/account/me.
+  const { data: account } = useAsync(() => accountApi.me(), [])
 
   async function logout() {
     setLoggingOut(true)
@@ -108,19 +114,34 @@ export function Sidebar() {
             {bottomItems.map(item => (
               <NavLink key={item.href} item={item} pathname={pathname} collapsed={collapsed} />
             ))}
-            {/* Avatar utilisateur */}
+            {/* Avatar utilisateur — cliquable, ouvre la configuration de compte */}
             <li>
-              <div className={`flex items-center gap-3 px-3 py-2.5 rounded-md ${collapsed ? 'justify-center' : ''}`}>
+              <Link
+                href="/settings?tab=compte"
+                className={
+                  `flex items-center gap-3 px-3 py-2.5 rounded-md transition-colors duration-100 ` +
+                  `hover:bg-gray-pale focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange ` +
+                  `${collapsed ? 'justify-center' : ''}`
+                }
+                aria-label="Configuration du compte"
+                title="Configuration du compte"
+              >
                 <div className="w-7 h-7 rounded-full bg-orange/20 flex items-center justify-center shrink-0">
-                  <span className="font-heading text-[11px] font-bold text-orange">K</span>
+                  <span className="font-heading text-[11px] font-bold text-orange">
+                    {(account?.display_name || 'É').charAt(0).toUpperCase()}
+                  </span>
                 </div>
                 {!collapsed && (
                   <div className="min-w-0">
-                    <p className="font-heading text-[12px] font-semibold text-anthracite truncate">Éditeur</p>
-                    <p className="font-heading text-[11px] text-gray-dk truncate">kakilambe.com</p>
+                    <p className="font-heading text-[12px] font-semibold text-anthracite truncate">
+                      {account?.display_name || 'Éditeur'}
+                    </p>
+                    <p className="font-heading text-[11px] text-gray-dk truncate">
+                      {account?.email || 'kakilambe.com'}
+                    </p>
                   </div>
                 )}
-              </div>
+              </Link>
             </li>
             {/* Déconnexion */}
             <li>

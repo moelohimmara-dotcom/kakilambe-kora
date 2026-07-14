@@ -1,38 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { jwtVerify } from 'jose'
 
 const SESSION_COOKIE = 'kora_session'
 const ADMIN_COOKIE   = 'kora_admin_token'
 
 const PUBLIC_PATHS = ['/login', '/setup', '/system/login', '/api/auth', '/api/admin']
 
-// Faille corrigée : ce middleware ne comparait le cookie qu'à sa LONGUEUR
-// (`token.length < 8`), jamais à sa valeur réelle. `/api/auth/admin` et
-// `/api/auth/login` posent tous deux le cookie = ADMIN_SECRET_KEY en clair
-// (même secret partagé pour les deux espaces) — n'importe quelle chaîne de
-// 8+ caractères nommée kora_admin_token/kora_session contournait donc
-// entièrement l'authentification de /system/* ET du groupe éditorial,
-// puisque rien ne revalidait jamais la valeur côté serveur après la pose du
-// cookie. Comparaison en temps constant (timingSafeEqualString) pour éviter
-// qu'un timing attack sur la comparaison ne révèle le secret caractère par
-// caractère.
-function timingSafeEqualString(a: string, b: string): boolean {
-  if (a.length !== b.length) return false
-  let mismatch = 0
-  for (let i = 0; i < a.length; i++) {
-    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i)
-  }
-  return mismatch === 0
+// Migration 2026-07-14 (table `users` réelle, cf. backend/db/migrations/010_users_table.sql) :
+// les cookies ne contiennent plus le secret ADMIN_SECRET_KEY en clair — ce
+// design comparait un cookie directement à une variable d'environnement
+// STATIQUE, ce qui aurait rendu tout changement de mot de passe en base
+// invisible ici (jamais revérifié). Remplacé par un jeton signé HS256
+// (format JWT standard, émis par backend/core/security.py) : la validité
+// se vérifie par SIGNATURE uniquement, sans appel DB depuis l'Edge Runtime,
+// tout en reflétant réellement le mot de passe actuel de l'utilisateur
+// (la signature ne peut être forgée sans connaître la clé de signature).
+function getSigningKey(): Uint8Array {
+  const secret = process.env.SESSION_JWT_SECRET || process.env.ADMIN_SECRET_KEY || ''
+  return new TextEncoder().encode(secret)
 }
 
-function hasValidSecret(request: NextRequest, cookieName: string): boolean {
-  const expected = process.env.ADMIN_SECRET_KEY
-  if (!expected) return false
+async function verifySessionCookie(request: NextRequest, cookieName: string): Promise<boolean> {
   const token = request.cookies.get(cookieName)?.value
   if (!token) return false
-  return timingSafeEqualString(token, expected)
+  const secret = getSigningKey()
+  if (secret.length === 0) return false
+  try {
+    await jwtVerify(token, secret, { algorithms: ['HS256'] })
+    return true
+  } catch {
+    return false
+  }
 }
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // Laisser passer les routes publiques et assets
@@ -44,9 +45,9 @@ export function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // Routes /system/** → cookie admin, revalidé contre le vrai secret
+  // Routes /system/** → cookie admin, revalidé par signature JWT
   if (pathname.startsWith('/system')) {
-    if (!hasValidSecret(request, ADMIN_COOKIE)) {
+    if (!(await verifySessionCookie(request, ADMIN_COOKIE))) {
       const url = new URL('/system/login', request.url)
       url.searchParams.set('redirect', pathname)
       return NextResponse.redirect(url)
@@ -54,8 +55,8 @@ export function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // Routes éditoriales → cookie session, revalidé contre le vrai secret
-  if (!hasValidSecret(request, SESSION_COOKIE)) {
+  // Routes éditoriales → cookie session, revalidé par signature JWT
+  if (!(await verifySessionCookie(request, SESSION_COOKIE))) {
     const url = new URL('/login', request.url)
     url.searchParams.set('redirect', pathname)
     return NextResponse.redirect(url)

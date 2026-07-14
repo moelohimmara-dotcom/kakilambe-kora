@@ -46,6 +46,43 @@
   --font-mono:    'JetBrains Mono', monospace;
 }
 
+/* ── Thème sombre (2026-07-14) ────────────────────────────────────────
+   Root cause du choix d'implémentation : l'app entière utilise des
+   classes utilitaires Tailwind FIXES (bg-white, text-anthracite,
+   border-gray-light...) partout, pas un système de tokens `dark:` par
+   composant — retoucher chaque composant un par un serait un chantier
+   disproportionné pour ce correctif. À la place, on redéfinit les
+   variables CSS déjà en place sous `.dark`, et on surcharge les classes
+   utilitaires les plus utilisées pour qu'elles lisent ces variables —
+   sans modifier un seul fichier de composant. `.dark` est posé sur <html>
+   par next-themes (attribute="class", cf. ThemeProvider.tsx). Spécificité
+   naturelle (.dark .bg-white a 2 classes contre 1 pour .bg-white) : gagne
+   sur la cascade sans nécessiter !important. */
+:root.dark {
+  --cream:        #1a1918;
+  --white:        #232220;
+  --anthracite:   #f3f2ee;
+
+  --gray-light:   #3a3833;
+  --gray-pale:    #2a2926;
+  --gray-med:     #8a8780;
+  --gray-dk:      #b0aea5;
+}
+
+.dark .bg-white       { background-color: var(--white); }
+.dark .bg-cream       { background-color: var(--cream); }
+.dark .bg-gray-pale   { background-color: var(--gray-pale); }
+.dark .bg-gray-light  { background-color: var(--gray-light); }
+.dark .border-gray-light { border-color: var(--gray-light); }
+.dark .border-white   { border-color: var(--gray-light); }
+.dark .text-anthracite { color: var(--anthracite); }
+.dark .text-gray-dk    { color: var(--gray-dk); }
+.dark .text-gray-med   { color: var(--gray-med); }
+.dark .shadow-card,
+.dark .shadow-card-hover {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .3), 0 4px 12px rgba(0, 0, 0, .2);
+}
+
 /* ── Reset ────────────────────────────────────────────────────────── */
 *, *::before, *::after {
   box-sizing: border-box;

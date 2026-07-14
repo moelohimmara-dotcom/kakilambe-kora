@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     API_SECRET_KEY: str = ""
     ADMIN_SECRET_KEY: str = ""
     ADMIN_EMAIL: str = "mistermarcket@gmail.com"
+    # Clé de signature des jetons de session (HS256) — distincte du mot de
+    # passe utilisateur depuis la migration vers une vraie table `users`
+    # (cf. core/security.py). Repli sur ADMIN_SECRET_KEY si non définie,
+    # pour ne pas invalider tous les déploiements existants.
+    SESSION_JWT_SECRET: str = ""
     GMAIL_USER: str = ""
     GMAIL_APP_PASSWORD: str = ""
 

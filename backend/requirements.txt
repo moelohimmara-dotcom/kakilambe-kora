@@ -18,3 +18,4 @@ google-auth==2.35.0
 google-api-python-client==2.147.0
 qstash==3.4.0
 markdown==3.7
+bcrypt==4.2.0

@@ -17,6 +17,7 @@ logging.getLogger("uvicorn.access").addFilter(_AuthMeFilter())
 from core.scheduler import start_scheduler, scheduler
 from api.agent_routes import router as agent_router
 from api.auth_routes import router as auth_router
+from api.account_routes import router as account_router
 from api.article_routes import router as article_router
 from api.cycle_routes import router as cycle_router
 from api.provider_routes import router as provider_router
@@ -58,6 +59,7 @@ async def add_process_time(request: Request, call_next):
     return response
 
 app.include_router(auth_router,     prefix="/api/auth",     tags=["auth"])
+app.include_router(account_router,  prefix="/api/account",  tags=["account"])
 app.include_router(agent_router,    prefix="/api/agent",    tags=["agent"])
 app.include_router(article_router,  prefix="/api/articles", tags=["articles"])
 app.include_router(cycle_router,    prefix="/api/cycles",   tags=["cycles"])

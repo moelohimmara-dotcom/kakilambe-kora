@@ -1,6 +1,8 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { useTheme } from 'next-themes'
 import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -8,10 +10,10 @@ import { Toggle } from '@/components/ui/Toggle'
 import { Spinner } from '@/components/ui/Spinner'
 import { useAsync, useMutation } from '@/lib/hooks'
 import { useToast } from '@/lib/contexts/ToastContext'
-import { settingsApi, providerApi, healthApi } from '@/lib/api'
+import { settingsApi, providerApi, healthApi, accountApi } from '@/lib/api'
 import type { SystemPrompt, Provider, AppSettings, WpCategory, KoraCategoryLabel } from '@/lib/types'
 
-type Tab = 'wordpress' | 'categories' | 'prompts' | 'providers'
+type Tab = 'wordpress' | 'categories' | 'prompts' | 'providers' | 'compte'
 
 // app_settings stocke tout en TEXT côté backend (str(value) en Python) —
 // une valeur booléenne fausse revient comme la chaîne non vide "False",
@@ -33,13 +35,23 @@ const KORA_LABELS: KoraCategoryLabel[] = [
 ]
 
 export function SettingsScreen() {
+  const searchParams = useSearchParams()
   const [tab, setTab] = useState<Tab>('wordpress')
+
+  // Permet au bloc "Éditeur / kakilambe.com" de la sidebar de pointer
+  // directement sur cet onglet via /settings?tab=compte, sans dupliquer
+  // une page entière pour la configuration de compte.
+  useEffect(() => {
+    const requested = searchParams.get('tab')
+    if (requested === 'compte') setTab('compte')
+  }, [searchParams])
 
   const TABS: { key: Tab; label: string }[] = [
     { key: 'wordpress',  label: 'WordPress' },
     { key: 'categories', label: 'Catégories' },
     { key: 'prompts',    label: 'Prompts système' },
     { key: 'providers',  label: 'Fournisseurs LLM' },
+    { key: 'compte',     label: 'Compte' },
   ]
 
   return (
@@ -75,6 +87,7 @@ export function SettingsScreen() {
         {tab === 'categories' && <CategoriesTab />}
         {tab === 'prompts' && <PromptsTab />}
         {tab === 'providers' && <ProvidersTab />}
+        {tab === 'compte' && <AccountTab />}
       </div>
     </div>
   )
@@ -697,6 +710,219 @@ function ProviderRow({ provider, onRefetch }: { provider: Provider; onRefetch: (
           Remettre actif
         </Button>
       )}
+    </Card>
+  )
+}
+
+// ── Compte Tab ────────────────────────────────────────────────────────────────
+// Root cause corrigée (audit 2026-07-14) : "Éditeur / kakilambe.com" dans la
+// sidebar était du texte JSX en dur, sans donnée backend. Tout ce qui suit
+// est lu/écrit via /api/account/* (table `users`), jamais en localStorage
+// seul — un admin peut consulter/modifier ces mêmes champs via
+// /api/account/admin/users/{id}.
+function AccountTab() {
+  const { data: account, loading, refetch } = useAsync(() => accountApi.me(), [])
+
+  return (
+    <div className="space-y-6">
+      {loading && <Spinner />}
+      {account && (
+        <>
+          <DisplayNameSection currentName={account.display_name} onSaved={refetch} />
+          <CredentialsSection currentEmail={account.email} onSaved={refetch} />
+          <ThemeSection currentTheme={account.theme} onSaved={refetch} />
+        </>
+      )}
+    </div>
+  )
+}
+
+function DisplayNameSection({ currentName, onSaved }: { currentName: string; onSaved: () => void }) {
+  const [name, setName] = useState(currentName)
+  const { show } = useToast()
+  const { mutate, loading } = useMutation((n: string) => accountApi.updateProfile(n))
+
+  useEffect(() => { setName(currentName) }, [currentName])
+
+  async function save() {
+    const result = await mutate(name.trim())
+    if (result) {
+      show('Nom mis à jour', 'success')
+      onSaved()
+    } else {
+      show('Échec de la mise à jour du nom', 'error')
+    }
+  }
+
+  return (
+    <Card>
+      <h2 className="font-heading font-bold text-[15px] text-anthracite mb-1">Nom affiché</h2>
+      <p className="font-heading text-[12px] text-gray-dk mb-4">Le nom visible dans la sidebar et l&apos;interface.</p>
+      <div className="flex gap-3 items-end max-w-md">
+        <div className="flex-1">
+          <Field label="Nom" id="display-name">
+            <input
+              id="display-name"
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              maxLength={80}
+              className="w-full px-3 py-2 rounded-md border border-gray-light font-heading text-[13px] focus:outline-none focus:ring-2 focus:ring-orange"
+            />
+          </Field>
+        </div>
+        <Button variant="confirm" size="md" onClick={save} disabled={loading || !name.trim() || name.trim() === currentName}>
+          {loading ? 'Enregistrement…' : 'Enregistrer'}
+        </Button>
+      </div>
+    </Card>
+  )
+}
+
+function CredentialsSection({ currentEmail, onSaved }: { currentEmail: string; onSaved: () => void }) {
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newEmail, setNewEmail] = useState(currentEmail)
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const { show } = useToast()
+  const { mutate, loading, error } = useMutation(accountApi.updateCredentials)
+
+  useEffect(() => { setNewEmail(currentEmail) }, [currentEmail])
+
+  async function save() {
+    if (!currentPassword) {
+      show('Le mot de passe actuel est requis', 'error')
+      return
+    }
+    if (newPassword && newPassword !== confirmPassword) {
+      show('La confirmation ne correspond pas au nouveau mot de passe', 'error')
+      return
+    }
+    const payload: { current_password: string; new_email?: string; new_password?: string } = {
+      current_password: currentPassword,
+    }
+    if (newEmail.trim() !== currentEmail) payload.new_email = newEmail.trim()
+    if (newPassword) payload.new_password = newPassword
+
+    if (!payload.new_email && !payload.new_password) {
+      show('Aucun changement à enregistrer', 'default')
+      return
+    }
+
+    const result = await mutate(payload)
+    if (result) {
+      show('Identifiants mis à jour', 'success')
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+      onSaved()
+    } else {
+      show(error || 'Échec de la mise à jour des identifiants', 'error')
+    }
+  }
+
+  return (
+    <Card>
+      <h2 className="font-heading font-bold text-[15px] text-anthracite mb-1">Identifiants de connexion</h2>
+      <p className="font-heading text-[12px] text-gray-dk mb-4">
+        Le mot de passe actuel est requis pour tout changement d&apos;email ou de mot de passe.
+      </p>
+      <div className="space-y-4 max-w-md">
+        <Field label="Email" id="cred-email">
+          <input
+            id="cred-email"
+            type="email"
+            value={newEmail}
+            onChange={e => setNewEmail(e.target.value)}
+            className="w-full px-3 py-2 rounded-md border border-gray-light font-heading text-[13px] focus:outline-none focus:ring-2 focus:ring-orange"
+          />
+        </Field>
+        <Field label="Nouveau mot de passe (laisser vide pour ne pas changer)" id="cred-new-password">
+          <input
+            id="cred-new-password"
+            type="password"
+            value={newPassword}
+            onChange={e => setNewPassword(e.target.value)}
+            autoComplete="new-password"
+            className="w-full px-3 py-2 rounded-md border border-gray-light font-heading text-[13px] focus:outline-none focus:ring-2 focus:ring-orange"
+          />
+        </Field>
+        {newPassword && (
+          <Field label="Confirmer le nouveau mot de passe" id="cred-confirm-password">
+            <input
+              id="cred-confirm-password"
+              type="password"
+              value={confirmPassword}
+              onChange={e => setConfirmPassword(e.target.value)}
+              autoComplete="new-password"
+              className="w-full px-3 py-2 rounded-md border border-gray-light font-heading text-[13px] focus:outline-none focus:ring-2 focus:ring-orange"
+            />
+          </Field>
+        )}
+        <Field label="Mot de passe actuel (confirmation obligatoire)" id="cred-current-password">
+          <input
+            id="cred-current-password"
+            type="password"
+            value={currentPassword}
+            onChange={e => setCurrentPassword(e.target.value)}
+            autoComplete="current-password"
+            className="w-full px-3 py-2 rounded-md border border-gray-light font-heading text-[13px] focus:outline-none focus:ring-2 focus:ring-orange"
+          />
+        </Field>
+        <Button variant="confirm" size="md" onClick={save} disabled={loading}>
+          {loading ? 'Enregistrement…' : 'Enregistrer les identifiants'}
+        </Button>
+      </div>
+    </Card>
+  )
+}
+
+function ThemeSection({ currentTheme, onSaved }: { currentTheme: 'light' | 'dark'; onSaved: () => void }) {
+  const { setTheme } = useTheme()
+  const { show } = useToast()
+  const { mutate, loading } = useMutation((t: 'light' | 'dark') => accountApi.updateTheme(t))
+
+  async function choose(t: 'light' | 'dark') {
+    // Application immédiate côté UI (pas d'attente réseau pour le retour
+    // visuel), puis persistance backend — la source de vérité reste la DB,
+    // relue à chaque chargement (cf. AccountThemeSync dans app/layout.tsx),
+    // pas seulement le cache local de next-themes.
+    setTheme(t)
+    const result = await mutate(t)
+    if (result) {
+      show('Thème mis à jour', 'success')
+      onSaved()
+    } else {
+      show('Échec de la sauvegarde du thème', 'error')
+    }
+  }
+
+  return (
+    <Card>
+      <h2 className="font-heading font-bold text-[15px] text-anthracite mb-1">Apparence</h2>
+      <p className="font-heading text-[12px] text-gray-dk mb-4">Thème appliqué immédiatement, conservé après rechargement ou reconnexion.</p>
+      <div className="flex gap-3">
+        <button
+          onClick={() => choose('light')}
+          disabled={loading}
+          className={
+            `flex-1 max-w-[160px] px-4 py-3 rounded-md border font-heading text-[13px] font-semibold transition-all ` +
+            `${currentTheme === 'light' ? 'border-orange bg-orange/10 text-orange' : 'border-gray-light text-gray-dk hover:border-orange/50'}`
+          }
+        >
+          ☀️ Clair
+        </button>
+        <button
+          onClick={() => choose('dark')}
+          disabled={loading}
+          className={
+            `flex-1 max-w-[160px] px-4 py-3 rounded-md border font-heading text-[13px] font-semibold transition-all ` +
+            `${currentTheme === 'dark' ? 'border-orange bg-orange/10 text-orange' : 'border-gray-light text-gray-dk hover:border-orange/50'}`
+          }
+        >
+          🌙 Sombre
+        </button>
+      </div>
     </Card>
   )
 }

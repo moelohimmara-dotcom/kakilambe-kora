@@ -158,3 +158,34 @@ export const settingsApi = {
 export const healthApi = {
   check: () => request<{ status: string; services: Record<string, string> }>('/health'),
 }
+
+// ── Compte utilisateur ───────────────────────────────────────────────────────
+// Remplace le bloc "Éditeur / kakilambe.com" en dur de la sidebar — toute
+// donnée (nom affiché, thème) est lue/écrite via ces routes backend, jamais
+// en localStorage seul (cf. db/migrations/010_users_table.sql).
+export interface AccountProfile {
+  id: string
+  email: string
+  display_name: string
+  theme: 'light' | 'dark'
+  role: 'editor' | 'admin'
+}
+
+export const accountApi = {
+  me: () => request<AccountProfile>('/api/account/me'),
+  updateProfile: (display_name: string) =>
+    request<{ ok: boolean; display_name: string }>('/api/account/profile', {
+      method: 'PATCH',
+      body: JSON.stringify({ display_name }),
+    }),
+  updateCredentials: (data: { current_password: string; new_email?: string; new_password?: string }) =>
+    request<{ ok: boolean; email: string }>('/api/account/credentials', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateTheme: (theme: 'light' | 'dark') =>
+    request<{ ok: boolean; theme: string }>('/api/account/theme', {
+      method: 'PATCH',
+      body: JSON.stringify({ theme }),
+    }),
+}
