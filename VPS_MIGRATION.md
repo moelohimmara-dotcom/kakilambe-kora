@@ -10,7 +10,6 @@ VPS Linux
 ├── systemd
 │   ├── kora-backend.service  (uvicorn)
 │   └── kora-frontend.service (next start)
-├── Redis local (localhost:6379)
 └── .env (hors git, sécurisé)
 ```
 
