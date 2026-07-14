@@ -5,6 +5,7 @@ import { BottomNav } from './BottomNav'
 import { MobileSidebar } from './MobileSidebar'
 import { MainContent } from './MainContent'
 import { ToastContainer } from '@/components/ui/Toast'
+import { HeaderVisibilityProvider } from '@/lib/contexts/HeaderVisibilityContext'
 
 interface AppShellProps {
   children: ReactNode
@@ -14,13 +15,15 @@ interface AppShellProps {
 
 export function AppShell({ children, title, topbarActions }: AppShellProps) {
   return (
-    <div className="min-h-screen bg-cream">
-      <Sidebar />
-      <MobileSidebar />
-      <Topbar title={title}>{topbarActions}</Topbar>
-      <BottomNav />
-      <MainContent>{children}</MainContent>
-      <ToastContainer />
-    </div>
+    <HeaderVisibilityProvider>
+      <div className="min-h-screen bg-cream">
+        <Sidebar />
+        <MobileSidebar />
+        <Topbar title={title}>{topbarActions}</Topbar>
+        <BottomNav />
+        <MainContent>{children}</MainContent>
+        <ToastContainer />
+      </div>
+    </HeaderVisibilityProvider>
   )
 }

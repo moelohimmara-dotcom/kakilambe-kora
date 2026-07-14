@@ -75,6 +75,13 @@
 .dark .bg-gray-light  { background-color: var(--gray-light); }
 .dark .border-gray-light { border-color: var(--gray-light); }
 .dark .border-white   { border-color: var(--gray-light); }
+/* Root cause trouvée en implémentant le header rétractable (2026-07-14) :
+   `bg-white/90` (modificateur d'opacité Tailwind) compile vers une classe
+   littéralement nommée `.bg-white\/90` — DIFFÉRENTE de `.bg-white` ci-dessus
+   — donc jamais couverte par la règle générique. Sans cet ajout, le Topbar
+   et son affordance de réouverture gardaient un fond clair résiduel semi-
+   transparent en thème sombre (contraste cassé contre le texte clair). */
+.dark .bg-white\/90   { background-color: rgba(35, 34, 32, 0.9); }
 .dark .text-anthracite { color: var(--anthracite); }
 .dark .text-gray-dk    { color: var(--gray-dk); }
 .dark .text-gray-med   { color: var(--gray-med); }
