@@ -10,8 +10,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ detail: 'Identifiants manquants' }, { status: 401 })
   }
 
+  // .trim() sur le mot de passe : un clavier mobile ou une suggestion
+  // d'auto-remplissage ajoute parfois un espace en début/fin, invisible à
+  // l'écran (le champ est masqué par des points), qui faisait échouer une
+  // comparaison stricte alors que le mot de passe affiché semblait correct.
   const emailMatch = email.toLowerCase().trim() === adminEmail.toLowerCase()
-  const passMatch  = password === adminKey
+  const passMatch  = password.trim() === adminKey.trim()
 
   if (!emailMatch || !passMatch) {
     return NextResponse.json({ detail: 'Identifiants incorrects' }, { status: 401 })

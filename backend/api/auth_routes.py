@@ -47,7 +47,11 @@ async def login(body: LoginRequest, response: Response):
         return JSONResponse({"detail": "Auth not configured"}, status_code=500)
 
     email_ok = body.email.strip().lower() == admin_email.strip().lower()
-    pass_ok  = body.password == expected_key
+    # .strip() sur le mot de passe : même correctif que la route Next.js
+    # équivalente (frontend/app/api/auth/login/route.ts) — un espace ajouté
+    # par un clavier mobile/auto-remplissage est invisible dans un champ
+    # masqué et faisait échouer une comparaison stricte.
+    pass_ok  = body.password.strip() == expected_key.strip()
 
     if not email_ok or not pass_ok:
         return JSONResponse({"detail": "Identifiants incorrects"}, status_code=401)
@@ -77,7 +81,7 @@ async def logout():
 @router.post("/admin")
 async def admin_login(body: AdminLoginRequest):
     expected = settings.ADMIN_SECRET_KEY
-    if not expected or body.secret != expected:
+    if not expected or body.secret.strip() != expected.strip():
         return JSONResponse({"error": "Accès refusé"}, status_code=401)
 
     resp = JSONResponse({"ok": True})

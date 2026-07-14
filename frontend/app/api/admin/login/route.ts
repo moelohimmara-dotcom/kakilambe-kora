@@ -4,7 +4,9 @@ export async function POST(req: NextRequest) {
   const { secret } = await req.json().catch(() => ({}))
 
   const expected = process.env.ADMIN_SECRET_KEY
-  if (!expected || !secret || secret !== expected) {
+  // .trim() : même correctif que /api/auth/login — un espace ajouté par un
+  // clavier mobile/auto-remplissage est invisible dans un champ masqué.
+  if (!expected || !secret || secret.trim() !== expected.trim()) {
     return NextResponse.json({ error: 'Accès refusé' }, { status: 401 })
   }
 
