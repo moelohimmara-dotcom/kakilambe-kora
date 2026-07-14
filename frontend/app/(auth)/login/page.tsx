@@ -8,6 +8,7 @@ export default function LoginPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -86,17 +87,27 @@ export default function LoginPage() {
               >
                 Mot de passe
               </label>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                required
-                placeholder="••••••••"
-                className="form-input"
-                aria-invalid={error ? true : undefined}
-                aria-describedby={error ? 'login-error' : undefined}
-              />
+              <div className="relative">
+                <input
+                  id="password"
+                  name="password"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  required
+                  placeholder="••••••••"
+                  className="form-input pr-16"
+                  aria-invalid={error ? true : undefined}
+                  aria-describedby={error ? 'login-error' : undefined}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(s => !s)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 font-heading text-[11px] font-semibold text-gray-dk uppercase tracking-wide"
+                  tabIndex={-1}
+                >
+                  {showPassword ? 'Cacher' : 'Voir'}
+                </button>
+              </div>
             </div>
 
             {error && (
