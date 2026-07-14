@@ -14,6 +14,8 @@ class ArticleKORA(BaseModel):
     source_url: str
     source_nom: str
     image_prompt: str
+    llm_provider_used: str = ""
+    llm_model_used: str = ""
 
 
 class KoraState(TypedDict):

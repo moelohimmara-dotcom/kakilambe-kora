@@ -1,5 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 from contextlib import asynccontextmanager
 import ssl
 import uuid
@@ -25,23 +26,29 @@ _ssl_ctx.verify_mode = ssl.CERT_NONE
 
 # Lazy init — ne pas crasher si DATABASE_URL est vide au démarrage
 #
-# statement_cache_size=0 : le pooler Supabase (port 6543) tourne PgBouncer en
-# mode transaction — les connexions physiques sont recyclées entre requêtes
-# HTTP, donc les prepared statements qu'asyncpg met en cache côté client
-# pointent vers des statements qui n'existent plus sur la connexion physique
-# recyclée (asyncpg.exceptions.InvalidSQLStatementNameError: prepared
-# statement "__asyncpg_stmt_fe__" does not exist).
+# Incident résiduel (2026-07-14, après le premier correctif statement_cache_size
+# + nom UUID) : InvalidSQLStatementNameError persistait encore sur certaines
+# requêtes de premier plan (GET /api/articles), pas seulement en tâche de
+# fond. Cause : le POOL DE CONNEXIONS de SQLAlchemy (pool_size=5) réutilise
+# les mêmes objets de connexion asyncpg côté client À TRAVERS PLUSIEURS
+# requêtes HTTP successives — mais PgBouncer (mode transaction) peut faire
+# correspondre cet objet réutilisé à une connexion PHYSIQUE Postgres
+# différente à chaque nouvelle transaction. Même avec un nom de prepared
+# statement unique par appel, la combinaison pooling client + pooling
+# PgBouncer côté serveur reste fragile.
 #
-# statement_cache_size=0 seul ne suffit pas : asyncpg nomme alors ses PREPARE
-# via un compteur (__asyncpg_stmt_N__) qui peut entrer en collision avec un
-# nom déjà préparé par UNE AUTRE session logique sur la même connexion
-# physique recyclée par PgBouncer (DuplicatePreparedStatementError). Un nom
-# généré par UUID à chaque appel élimine toute collision entre sessions.
+# Correctif définitif documenté pour asyncpg+SQLAlchemy+PgBouncer en mode
+# transaction : NullPool — désactive le pooling côté client, une connexion
+# TCP/TLS fraîche est ouverte pour chaque emprunt puis fermée. C'est
+# exactement l'architecture que PgBouncer est conçu pour absorber
+# (multiplexage de nombreuses connexions client courtes sur peu de connexions
+# serveur) — laisser SQLAlchemy pooler par-dessus était redondant et source
+# de ce bug. Léger coût : une négociation TCP/TLS à chaque requête plutôt
+# qu'une connexion réutilisée, acceptable pour le volume de cette
+# application (usage mono-utilisateur).
 engine = create_async_engine(
     _url or "postgresql+asyncpg://localhost/placeholder",
-    pool_size=5,
-    max_overflow=10,
-    pool_pre_ping=True,
+    poolclass=NullPool,
     echo=settings.DEBUG,
     connect_args={
         "ssl": _ssl_ctx,

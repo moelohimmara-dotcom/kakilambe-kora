@@ -328,6 +328,12 @@ async def _write_with_retry(article: dict) -> ArticleKORA:
 
             # Validation Pydantic — catégorie résolue en Python, jamais devinée par le LLM
             category_id = await _resolve_category_id(data.get("categorie_label", ""))
+            # response.model est préfixé par le fournisseur (convention litellm,
+            # ex. "groq/llama-3.3-70b-versatile") — jamais capturé avant ce fix,
+            # articles.llm_provider_used/llm_model_used restaient NULL en base
+            # malgré un vrai appel LLM réussi (visible seulement dans les logs).
+            model_used = getattr(response, "model", "") or ""
+            provider_used = model_used.split("/", 1)[0] if "/" in model_used else ""
             article_obj = ArticleKORA(
                 titre=data.get("titre", titre)[:70],
                 chapeau=chapeau,
@@ -338,6 +344,8 @@ async def _write_with_retry(article: dict) -> ArticleKORA:
                 source_url=url,
                 source_nom=source_nom,
                 image_prompt=data.get("image_prompt", f"Journalistic photo for article: {titre}"),
+                llm_provider_used=provider_used,
+                llm_model_used=model_used,
             )
             return article_obj
 
@@ -371,6 +379,19 @@ async def run(state: KoraState) -> KoraState:
         # Persiste en base — PENDING_REVIEW en semi (attente HITL), DRAFT en auto
         article_dict = article_obj.model_dump()
         db_id = await _save_to_db(article_dict, state["cycle_id"], state.get("mode", "semi"))
+
+        # Incident réel (cycle 8f4cc3d8, 2026-07-14) : _save_to_db() peut
+        # échouer (panne DB transitoire) et renvoyer "unknown" sans jamais
+        # lever d'exception (cf. son propre try/except). Avant ce fix, le
+        # graphe continuait quand même vers illustrator/WordPress avec un
+        # db_id fictif, gaspillant un appel Pollinations + upload WordPress
+        # réels pour un article qui n'existe nulle part en base — puis
+        # rapportait le cycle "PAUSED, prêt à valider" alors qu'il n'y avait
+        # RIEN à valider. Traiter explicitement comme un échec d'écriture
+        # empêche cette suite d'actions sur du vide.
+        if db_id == "unknown":
+            raise RuntimeError("Échec d'enregistrement de l'article en base — abandon avant génération d'image")
+
         article_dict["db_id"] = db_id
 
         logger.info(
@@ -389,6 +410,7 @@ async def run(state: KoraState) -> KoraState:
 
     except Exception as e:
         logger.error("node_writer_failed", cycle_id=state["cycle_id"], error=str(e))
+        emit_log(state["cycle_id"], "WARN", "Échec de rédaction pour cet article — passage au suivant")
         errors = list(state.get("errors", []))
         errors.append(f"Writer[{idx}]: {e}")
         return {
@@ -415,10 +437,12 @@ async def _save_to_db(article: dict, cycle_id: str, mode: str = "semi") -> str:
                 INSERT INTO articles (
                     titre, chapeau, corps, meta_description, mots_cles,
                     categorie_id, source_url, source_nom, image_prompt,
+                    llm_provider_used, llm_model_used,
                     status, origin, cycle_id
                 ) VALUES (
                     :titre, :chapeau, :corps, :meta_description, :mots_cles,
                     :categorie_id, :source_url, :source_nom, :image_prompt,
+                    :llm_provider_used, :llm_model_used,
                     :status, :origin, :cycle_id
                 ) RETURNING id
                 """),
@@ -432,6 +456,8 @@ async def _save_to_db(article: dict, cycle_id: str, mode: str = "semi") -> str:
                     "source_url":      article["source_url"],
                     "source_nom":      article["source_nom"],
                     "image_prompt":    article["image_prompt"],
+                    "llm_provider_used": article.get("llm_provider_used") or None,
+                    "llm_model_used":    article.get("llm_model_used") or None,
                     "status":          status,
                     "origin":          origin,
                     "cycle_id":        cycle_id,
