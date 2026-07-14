@@ -68,22 +68,32 @@ RÈGLES STRUCTURELLES STRICTES :
    ANGLE D'ATTAQUE IMPOSÉ POUR CE CHAPEAU (varie à chaque article, ne jamais répéter le même
    enchaînement d'un cycle à l'autre) : {hook_style}. Cet angle ne dispense JAMAIS de répondre aux
    5W dans les deux premières phrases — il détermine seulement par quel bout entrer dans l'info.
-3. CORPS — PYRAMIDE INVERSÉE, RYTHME MOBILE-FIRST, ULTRA-SCANNABLE :
+3. CORPS — PYRAMIDE INVERSÉE, PROSE JOURNALISTIQUE FLUIDE (style BBC Afrique / RFI Afrique) :
    - Ordre de hiérarchie STRICT : l'essentiel de l'actualité en premier, les détails secondaires,
      le contexte historique et les perspectives plus larges en dernier — jamais l'inverse.
-   - Paragraphes COURTS : 2 lignes maximum chacun. Une idée par phrase, une idée par paragraphe.
-   - Phrases percutantes : Sujet + Verbe + Complément. Pas de phrases à rallonge.
-   - Sous-titres dynamiques (Markdown ##) qui donnent envie de continuer à lire, environ tous les 150 mots.
-     INTERDICTION ABSOLUE d'utiliser ces mots dans un sous-titre : "Introduction", "Contexte",
-     "Conclusion", "Perspective(s)", "Enjeux", "Résumé". Modèle observé chez BBC Afrique (analyse
-     d'article réel) : formule le sous-titre en QUESTION directe qui relance la curiosité ("Pourquoi ce
-     projet change la donne ?", "Que risque le pays maintenant ?") ou en libellé d'entité court (nom
-     d'un acteur, d'un lieu) quand la section traite spécifiquement de lui.
+   - Paragraphes de 2 à 4 phrases qui s'ENCHAÎNENT logiquement : chaque paragraphe prolonge
+     directement le précédent (une conséquence, une réaction, un chiffre, une précision qui répond
+     à la question laissée par la phrase d'avant) — jamais des blocs juxtaposés sans lien narratif.
+     Root cause d'un défaut de style constaté (audit 2026-07-14, article FGF) : un paragraphe limité
+     à "2 lignes maximum" produit un effet haché, pas un vrai récit.
+   - Sous-titres (Markdown ##) : usage MESURÉ, réservé aux vrais changements de sujet (un nouvel
+     acteur qui entre en scène, le passage des faits immédiats au contexte, un changement d'échelle
+     géographique) — JAMAIS un sous-titre par tranche fixe de mots. Pour 800-1200 mots, viser 3 à 5
+     sous-titres maximum sur tout l'article, jamais plus. Forme : un LIBELLÉ COURT (nom d'acteur,
+     de lieu, de thème) — JAMAIS une question, jamais une formule scolaire ("Introduction",
+     "Contexte", "Conclusion", "Perspective(s)", "Enjeux", "Résumé"). Root cause d'un défaut
+     constaté (audit 2026-07-14) : une consigne antérieure imposait un sous-titre-question toutes
+     les ~150 mots, produisant un pattern Q&A répétitif et mécanique plutôt qu'un vrai récit.
+   - Citations : intègre-les dans la phrase narrative elle-même ("X a affirmé que...", "selon X,
+     ..."), jamais en bloc isolé détaché du paragraphe qui l'entoure.
    - MISE EN FORME OBLIGATOIRE : chaque sous-titre et chaque paragraphe est séparé par un VRAI saut
      de ligne double (\\n\\n) dans la valeur JSON du champ "corps". INTERDIT de mettre un sous-titre
      et le paragraphe qui suit sur la même ligne, et INTERDIT de coller plusieurs paragraphes bout à
      bout séparés seulement par des points. Exemple de format EXACT attendu pour le champ "corps" :
-     "## Premier sous-titre\\n\\nPremier paragraphe, deux lignes maximum.\\n\\n## Deuxième sous-titre\\n\\nDeuxième paragraphe, deux lignes maximum."
+     "## Premier libellé\\n\\nPremier paragraphe de deux à quatre phrases qui s'enchaînent.\\n\\nDeuxième paragraphe qui prolonge directement le précédent."
+   - INTERDICTION d'ajouter une section entière (ex. un paragraphe d'historique générique sans lien
+     direct avec l'actualité du jour) dont le seul but est d'allonger le texte sans apporter un fait,
+     un chiffre ou une citation nouveaux — chaque paragraphe doit faire progresser l'information.
    - Angle SOLUTIONS JOURNALISM : bannis le ton misérabiliste. Mets en avant l'action concrète,
      l'innovation, la résilience, les initiatives locales — sans travestir les faits.
    - Objectivité absolue : ne livre que des faits bruts. Toute opinion doit être attribuée explicitement
@@ -105,6 +115,14 @@ INTERDITS ABSOLUS — STYLE :
 - Voix passive excessive, répétitions
 - Toute affirmation sans source dans le matériel fourni
 - ANTI-HALLUCINATION : ne cite que des faits présents dans les sources fournies. N'invente jamais.
+  INTERDICTION ABSOLUE d'inventer un nom de personne, un titre/fonction, une citation ou une
+  réaction (ex. "un responsable de club a déclaré...", "la FIFA a indiqué que...") qui ne figure
+  PAS mot pour mot ou en substance dans le matériel SOURCE(S) À TRAITER ci-dessus — même pour
+  "étoffer" une section avec plusieurs points de vue. Root cause d'un incident réel constaté
+  (audit 2026-07-14, test de réécriture de l'article FGF) : un nom de personne et une citation
+  entièrement fabriqués ont été ajoutés dans une section "Réactions" absente des sources. Si les
+  sources ne donnent qu'UN seul point de vue (ex. un communiqué ministériel), l'article ne doit
+  développer QUE ce point de vue — approfondir un fait déjà présent, jamais en inventer un second.
 
 CATÉGORIE : choisis exactement un libellé parmi
 ["Politique", "Économie", "Société", "Sport", "Culture", "Sécurité", "International"].
@@ -320,17 +338,20 @@ def _validate_style(chapeau: str, corps: str) -> list[str]:
     if "##" in corps and "\n\n" not in corps.rsplit(_SIGNATURE, 1)[0]:
         violations.append("sous-titres et paragraphes collés sans vrai saut de ligne")
 
-    # Paragraphes de maximum 2 lignes — ~45 mots est un proxy raisonnable pour
-    # 2 lignes sur mobile. Ignore les sous-titres (##) et la signature finale.
+    # Paragraphes de 2 à 4 phrases qui s'enchaînent (style BBC Afrique/RFI
+    # Afrique, cf. correction du 2026-07-14 sur le style Q&A/haché) — ~100
+    # mots est un proxy raisonnable pour 4 phrases de longueur normale.
+    # L'ancien seuil de 45 mots (~2 lignes) forçait un style haché ;
+    # relevé pour permettre une prose fluide sans autoriser un pavé unique.
     body_without_signature = corps.rsplit(_SIGNATURE, 1)[0].strip()
     for block in body_without_signature.split("\n\n"):
         block = block.strip()
         if not block or block.startswith("#"):
             continue
         word_count = len(block.split())
-        if word_count > 45:
+        if word_count > 100:
             violations.append(
-                f"paragraphe trop long ({word_count} mots, max ~45 pour 2 lignes) : {block[:60]!r}…"
+                f"paragraphe trop long ({word_count} mots, max ~100 pour 2 à 4 phrases) : {block[:60]!r}…"
             )
 
     # Garde-fou de longueur — en plus de l'instruction du prompt (KORA
@@ -431,19 +452,27 @@ async def _expand_corps_if_short(corps: str, titre: str, length_requirement: str
         "après. Conserve le format Markdown existant (sous-titres ## suivis d'un "
         "double saut de ligne). RÈGLES STRICTES À RESPECTER SUR LE TEXTE ENTIER "
         "(sections existantes ET nouvelles) :\n"
-        "- Chaque paragraphe fait AU MAXIMUM 45 mots (2 lignes) — un paragraphe plus "
-        "long doit être scindé en plusieurs paragraphes séparés par un double saut de ligne.\n"
-        "- INTERDICTION ABSOLUE des sous-titres génériques/scolaires suivants (sous "
-        "quelque forme que ce soit, question ou non) : \"Introduction\", \"Contexte\", "
-        "\"Conclusion\", \"Perspective(s)\", \"Enjeux\", \"Résumé\" — remplace tout "
-        "sous-titre de ce type par une question factuelle précise ou un libellé "
-        "d'entité (nom d'acteur, de lieu, de chiffre).\n"
+        "- Paragraphes de 2 à 4 phrases qui s'enchaînent logiquement (une conséquence, "
+        "une réaction, un chiffre qui prolonge le paragraphe précédent) — jamais des "
+        "blocs juxtaposés sans lien narratif, jamais un pavé unique non plus.\n"
+        "- Sous-titres (##) : usage mesuré, 3 à 5 maximum sur tout l'article, JAMAIS "
+        "sous forme de question, JAMAIS les mots suivants sous quelque forme que ce "
+        "soit : \"Introduction\", \"Contexte\", \"Conclusion\", \"Perspective(s)\", "
+        "\"Enjeux\", \"Résumé\" — un sous-titre est un libellé court (nom d'acteur, "
+        "de lieu, de thème), jamais une question ni une formule scolaire.\n"
         "- Mots et expressions interdits : révolutionnaire, crucial(e), indéniable, "
         "explorer, transcender, de nos jours, au cœur de, véritable thriller, catalyseur.\n"
-        "Ajoute des sections supplémentaires "
-        "(contexte, précisions factuelles, enjeux, réactions déjà présentes dans le "
-        "texte) pour atteindre la longueur requise — sans jamais inventer un fait, un "
-        "chiffre ou une citation absents du texte actuel."
+        "Pour atteindre la longueur requise, NE PAS ajouter de section générique "
+        "déconnectée de l'actualité du jour (ex. un historique du secteur sans lien "
+        "direct). Approfondis plutôt les faits DÉJÀ présents : développe une citation "
+        "existante avec le reste de ce que dit la source, précise une chronologie, "
+        "détaille un chiffre ou un mécanisme déjà mentionné — sans jamais inventer un "
+        "fait, un chiffre ou une citation absents du texte actuel.\n"
+        "- INTERDICTION ABSOLUE d'inventer un nom de personne, une fonction/titre, une "
+        "citation ou une réaction (ex. \"un responsable de club a déclaré...\") pour "
+        "étoffer une section — même en réécriture. Si le texte actuel ne comporte "
+        "qu'un seul point de vue, l'article enrichi ne doit développer QUE ce point de "
+        "vue."
     )
     try:
         response = await llm_router.complete(
