@@ -238,6 +238,7 @@ async def run_cycle(body: RunRequest):
 
     final = _cycles.get(cycle_id, {})
     status = final.get("status")
+    asyncio.create_task(_cleanup_orchestration_state(cycle_id, body.mode, status))
 
     if status == "PAUSED":
         return {
@@ -456,12 +457,17 @@ async def resume_cycle(cycle_id: str):
                     _close_stream(cycle_id)
 
             await _update_cycle_status(cycle_id, _cycles[cycle_id]["status"])
+            if _cycles[cycle_id]["status"] != "PAUSED":
+                asyncio.create_task(
+                    _cleanup_orchestration_state(cycle_id, "semi", _cycles[cycle_id]["status"])
+                )
 
         except asyncio.CancelledError:
             _cycles[cycle_id]["status"] = "CANCELLED"
             _emit_log(cycle_id, "WARN", "Cycle annulé par l'utilisateur")
             await _update_cycle_status(cycle_id, "CANCELLED")
             _close_stream(cycle_id)
+            asyncio.create_task(_cleanup_orchestration_state(cycle_id, "semi", "CANCELLED"))
             raise
 
         except Exception as e:
@@ -470,6 +476,7 @@ async def resume_cycle(cycle_id: str):
             logger.error("cycle_resume_failed", cycle_id=cycle_id, error=str(e))
             await _update_cycle_status(cycle_id, "FAILED")
             _close_stream(cycle_id)
+            asyncio.create_task(_cleanup_orchestration_state(cycle_id, "semi", "FAILED"))
 
         finally:
             _running_tasks.pop(cycle_id, None)
@@ -512,11 +519,17 @@ async def cancel_cycle(cycle_id: str):
         task.cancel()
     else:
         # Pas de tâche en vol (ex. cycle PAUSED en attente HITL, sans coroutine
-        # active) — marquer directement le statut.
+        # active) — marquer directement le statut. Ce chemin ne passait par
+        # aucun _run()/_resume() (pas de tâche asyncio à annuler), donc le
+        # nettoyage de fin de cycle n'était jamais déclenché ici avant ce
+        # correctif — trouvé lors du test réel de la fonction cleanup.
         _cycles[cycle_id]["status"] = "CANCELLED"
         _emit_log(cycle_id, "WARN", "Cycle annulé par l'utilisateur")
         await _update_cycle_status(cycle_id, "CANCELLED")
         _close_stream(cycle_id)
+        asyncio.create_task(
+            _cleanup_orchestration_state(cycle_id, cycle.get("mode", "semi"), "CANCELLED")
+        )
 
     logger.info("cycle_cancelled", cycle_id=cycle_id)
     return {"cycle_id": cycle_id, "status": "CANCELLED", "message": "Cycle annulé"}
@@ -624,6 +637,59 @@ async def _cleanup_queue(cycle_id: str, delay: int = 300):
         _close_stream(cycle_id)
         await asyncio.sleep(30)
         drop_queue(cycle_id)
+
+
+async def _cleanup_orchestration_state(cycle_id: str, mode: str, terminal_status: str):
+    """
+    Nettoyage de fin de cycle (mécanisme d'orchestration, audit 2026-07-14) :
+    ne touche QUE l'état technique interne d'orchestration — jamais les
+    données produit (table `articles`, table `cycles`, `raw_feeds`, corbeille,
+    brouillons/publications WordPress), qui vivent dans leurs propres tables
+    et endpoints et ne sont jamais référencées ici.
+
+    Deux résidus techniques identifiés par audit :
+    1. Le checkpoint LangGraph MemorySaver du cycle (mode semi) — le graphe
+       est compilé UNE SEULE FOIS au démarrage du process (agent/graph.py),
+       avec un MemorySaver PARTAGÉ par tous les cycles, indexé par thread_id
+       = cycle_id. Sans purge explicite, chaque cycle terminé laissait son
+       état complet accumulé indéfiniment dans ce singleton pour toute la
+       durée de vie du process.
+    2. L'entrée `_cycles[cycle_id]` en mémoire — jamais retirée avant ce
+       correctif, seul le statut était mis à jour sur place.
+
+    N'agit QUE sur un statut TERMINAL (COMPLETED/CANCELLED/FAILED) — jamais
+    sur PAUSED, qui a encore besoin de son checkpoint intact pour reprendre
+    via /resume.
+    """
+    if terminal_status == "PAUSED":
+        return
+
+    if mode == "semi":
+        try:
+            from agent.graph import kora_graph_semi
+            checkpointer = kora_graph_semi.checkpointer
+            had_checkpoint = cycle_id in checkpointer.storage
+            checkpointer.storage.pop(cycle_id, None)
+            stale_write_keys = [k for k in list(checkpointer.writes.keys()) if k[0] == cycle_id]
+            for k in stale_write_keys:
+                checkpointer.writes.pop(k, None)
+            logger.info(
+                "cycle_orchestration_cleanup",
+                cycle_id=cycle_id,
+                status=terminal_status,
+                checkpoint_removed=had_checkpoint,
+                stale_writes_removed=len(stale_write_keys),
+            )
+        except Exception as e:
+            logger.warning("cycle_orchestration_cleanup_failed", cycle_id=cycle_id, error=str(e))
+
+    # Le registre en mémoire est conservé un moment pour que /status (polling
+    # frontend juste après la fin du cycle) puisse encore lire le résultat
+    # final sans dépendre de la base — même délai que la queue SSE
+    # (_cleanup_queue ci-dessus). La table `cycles` reste la source de vérité
+    # durable, donc cette purge ne perd aucune donnée consultable ailleurs.
+    await asyncio.sleep(300)
+    _cycles.pop(cycle_id, None)
 
 
 async def _persist_cycle(cycle_id: str, mode: str):

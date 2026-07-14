@@ -148,13 +148,25 @@ async def _fetch_content(url: str) -> str:
     abandonné (décision explicite, identifiants proxy invalides en
     production) — en cas d'échec, enrich() retombe sur l'extrait Tavily déjà
     disponible plutôt que sur un second scraper.
+
+    firecrawl_client.scrape() attrape déjà ses propres exceptions en interne
+    (log "firecrawl_scrape_failed") et renvoie None plutôt que de laisser
+    l'exception remonter — root cause trouvée lors du test de failover réel
+    du 2026-07-14 : le bloc except d'enrich() ci-dessous ne se déclenchait
+    JAMAIS, même avec Firecrawl totalement en panne, car aucune exception
+    n'atteignait jamais ce niveau. On re-remonte donc explicitement un échec
+    ici (None -> exception) pour que la bascule vers l'extrait Tavily soit
+    réellement journalisée comme un failover, pas silencieusement absorbée
+    un niveau plus bas.
     """
     from integrations.firecrawl_client import firecrawl_client
 
     content = await asyncio.wait_for(
         firecrawl_client.scrape(url), timeout=_SCRAPE_TIMEOUT
     )
-    return content or ""
+    if content is None:
+        raise RuntimeError("firecrawl_client.scrape() a échoué (voir firecrawl_scrape_failed)")
+    return content
 
 
 _QUOTE_NORMALIZE = str.maketrans({"’": "'", "‘": "'", "«": '"', "»": '"', "“": '"', "”": '"'})
@@ -297,10 +309,23 @@ async def run(state: KoraState) -> KoraState:
             content = await _fetch_content(url)
             article["markdown_content"] = _strip_boilerplate_prefix(content, article.get("title", ""))
         except asyncio.TimeoutError:
-            logger.warning("scrape_timeout", url=url)
+            # Failover en cascade (outil de relais prédéfini pour le scraping
+            # de contenu complet) : Firecrawl timeout -> repli sur l'extrait
+            # brut déjà fourni par Tavily lors de la recherche (article["content"]),
+            # jamais un cycle sans contenu du tout. Événement structuré dédié
+            # (nom distinct de "scrape_error") pour que la bascule et sa raison
+            # soient explicitement traçables, pas noyées dans un warning
+            # générique — audit 2026-07-14, mécanisme d'orchestration.
+            logger.warning(
+                "tool_failover", task="scrape_content", primary="firecrawl",
+                fallback="tavily_snippet", url=url, reason="timeout",
+            )
             article["markdown_content"] = article.get("content", "")
         except Exception as e:
-            logger.warning("scrape_error", url=url, error=str(e))
+            logger.warning(
+                "tool_failover", task="scrape_content", primary="firecrawl",
+                fallback="tavily_snippet", url=url, reason=str(e)[:200],
+            )
             article["markdown_content"] = article.get("content", "")
         return article
 
