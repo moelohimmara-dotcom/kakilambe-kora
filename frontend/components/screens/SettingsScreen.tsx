@@ -889,11 +889,10 @@ function ThemeSection({ currentTheme, onSaved }: { currentTheme: 'light' | 'dark
     // relue à chaque chargement (cf. AccountThemeSync dans app/layout.tsx),
     // pas seulement le cache local de next-themes.
     //
-    // themeOverride marqué AVANT setTheme : si le fetch de resynchronisation
-    // d'AccountThemeSync (lancé au montage de la page) est encore en vol, il
-    // ne doit pas écraser ce choix avec l'ancienne valeur backend qu'il a lue
-    // avant ce clic — cf. lib/theme/themeOverride.ts pour le détail de la
-    // course observée en conditions réelles.
+    // themeOverride verrouillé AVANT setTheme : empêche AccountThemeSync de
+    // lancer (ou de laisser aboutir) toute resynchronisation automatique
+    // pour le reste de cette session de page — cf. lib/theme/themeOverride.ts
+    // pour le détail du rebond observé en conditions réelles.
     themeOverride.current = true
     setTheme(t)
     const result = await mutate(t)
