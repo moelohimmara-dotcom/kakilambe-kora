@@ -11,6 +11,7 @@ import { Spinner } from '@/components/ui/Spinner'
 import { Modal } from '@/components/ui/Modal'
 import { ManualEditOverlay, ManualEditFields } from '@/components/ui/ManualEditOverlay'
 import { useAsync, useMutation } from '@/lib/hooks'
+import { useStickyBarOffset } from '@/lib/hooks/useStickyBarOffset'
 import { useToast } from '@/lib/contexts/ToastContext'
 import { articleApi } from '@/lib/api'
 import { regenerationApi, RegenVersions } from '@/lib/regenerationApi'
@@ -24,6 +25,7 @@ export function ArticleEditorScreen({ id }: { id: string }) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { show } = useToast()
+  const stickyBar = useStickyBarOffset()
   const [evaporating, setEvaporating] = useState(false)
   const [confirmReject, setConfirmReject] = useState(false)
   // ?edit=1 (venu de l'icône Éditer sur /articles) ouvre directement l'overlay
@@ -134,7 +136,7 @@ export function ArticleEditorScreen({ id }: { id: string }) {
   return (
     <div className={`min-h-screen ${evaporating ? 'article-evaporate' : ''}`}>
       {/* Top bar */}
-      <div className="sticky top-16 z-10 bg-white/90 backdrop-blur-sm border-b border-gray-light px-6 py-3 flex items-center gap-4">
+      <div className={`${stickyBar.className} bg-white/90 backdrop-blur-sm border-b border-gray-light px-6 py-3 flex items-center gap-4`}>
         <Button href="/articles" variant="ghost" size="sm">← Retour</Button>
         <div className="flex-1 min-w-0">
           <span className="font-heading text-[12px] text-gray-dk truncate block">
