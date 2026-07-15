@@ -82,6 +82,44 @@ async def _load_seen_urls() -> set:
         return set()
 
 
+def _parse_published_date(raw_date) -> datetime | None:
+    """
+    Parse le champ published_date brut de Tavily en datetime timezone-aware,
+    ou None si absent/invalide. Utilisé pour la fraîcheur ET pour la date
+    réelle attachée à l'article (cf. _attach_published_at) — un SEUL point
+    de parsing, jamais deux logiques divergentes.
+
+    Root cause corrigée (audit 2026-07-15, confirmée par un appel Tavily réel
+    en conditions live) : Tavily renvoie published_date au format RFC 2822
+    ("Tue, 14 Jul 2026 03:45:58 GMT"), PAS en ISO 8601. L'ancien parsing
+    (datetime.fromisoformat) échouait silencieusement sur CE format réel —
+    l'exception était absorbée et traitée comme "pas de date", ce qui
+    rendait le filtre de fraîcheur Jour-J (_is_fresh, en place depuis
+    longtemps) inopérant sur de vraies données Tavily sans qu'aucune erreur
+    ne soit jamais visible. Tente maintenant l'ISO 8601 (au cas où d'autres
+    sources/versions de l'API l'utiliseraient) puis, en repli, le format
+    RFC 2822 réellement observé (stdlib email.utils, aucune dépendance
+    ajoutée).
+    """
+    if not raw_date:
+        return None
+    try:
+        published = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=timezone.utc)
+        return published
+    except (ValueError, AttributeError):
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        published = parsedate_to_datetime(raw_date)
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=timezone.utc)
+        return published
+    except (ValueError, TypeError):
+        return None
+
+
 def _is_fresh(result: dict) -> bool:
     """
     Écarte un résultat dont la date de publication Tavily (published_date,
@@ -91,16 +129,29 @@ def _is_fresh(result: dict) -> bool:
     donnée manquante — le filtre serveur Tavily (days=1) reste la barrière
     principale, ceci n'est qu'une seconde couche défensive.
     """
-    raw_date = result.get("published_date")
-    if not raw_date:
+    published = result.get("published_at")
+    if published is None:
+        published = _parse_published_date(result.get("published_date"))
+    if published is None:
         return True
-    try:
-        published = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
-        if published.tzinfo is None:
-            published = published.replace(tzinfo=timezone.utc)
-        return (datetime.now(timezone.utc) - published) <= _FRESHNESS_WINDOW
-    except (ValueError, AttributeError):
-        return True
+    return (datetime.now(timezone.utc) - published) <= _FRESHNESS_WINDOW
+
+
+def _attach_published_at(results: list[dict]) -> None:
+    """
+    Root cause corrigée (audit 2026-07-15) : published_date était lu par
+    _is_fresh() comme simple filtre booléen puis jamais réutilisé — la date
+    réelle de publication de la source disparaissait avant d'atteindre
+    raw_feeds, encore moins l'article final. Attache ici un objet datetime
+    parsé (clé "published_at", distincte du "published_date" brut Tavily)
+    sur chaque résultat, pour qu'il survive telle quelle jusqu'à
+    _persist_raw_feeds puis jusqu'au nœud WRITE (jamais régénérée ni
+    reformulée par le LLM) — None si la source ne fournit aucune date
+    fiable, explicitement propagé comme "date non confirmée" plutôt que
+    remplacé par une valeur devinée.
+    """
+    for r in results:
+        r["published_at"] = _parse_published_date(r.get("published_date"))
 
 
 async def _persist_raw_feeds(batch_id: str, articles: list[dict]) -> None:
@@ -116,8 +167,8 @@ async def _persist_raw_feeds(batch_id: str, articles: list[dict]) -> None:
             for a in articles:
                 await db.execute(
                     text("""
-                        INSERT INTO raw_feeds (batch_id, source_url, source_name, title, content)
-                        VALUES (:batch_id, :source_url, :source_name, :title, :content)
+                        INSERT INTO raw_feeds (batch_id, source_url, source_name, title, content, published_at)
+                        VALUES (:batch_id, :source_url, :source_name, :title, :content, :published_at)
                     """),
                     {
                         "batch_id": batch_id,
@@ -125,6 +176,7 @@ async def _persist_raw_feeds(batch_id: str, articles: list[dict]) -> None:
                         "source_name": _domain_of(a.get("url", "")),
                         "title": (a.get("title") or "")[:500],
                         "content": (a.get("markdown_content") or a.get("content", ""))[:5000],
+                        "published_at": a.get("published_at"),
                     },
                 )
     except Exception as e:
@@ -321,6 +373,11 @@ async def _run_live_scrape(state: KoraState) -> KoraState:
     )
     for results in search_results:
         all_results.extend(results)
+
+    # Parse la date réelle de publication de chaque résultat UNE SEULE FOIS,
+    # avant tout filtrage — cf. _attach_published_at pour le root cause de
+    # sa disparition antérieure.
+    _attach_published_at(all_results)
 
     # Filtre Jour-J défensif (seconde couche derrière days=1 côté Tavily)
     stale_count = sum(1 for r in all_results if not _is_fresh(r))

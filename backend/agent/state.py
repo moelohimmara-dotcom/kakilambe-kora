@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import TypedDict, List, Optional, Annotated
 from pydantic import BaseModel, Field
 import operator
@@ -16,6 +17,10 @@ class ArticleKORA(BaseModel):
     image_prompt: str
     llm_provider_used: str = ""
     llm_model_used: str = ""
+    # Date réelle de publication de la source (jamais générée/déduite par le
+    # LLM — extraite en amont par agent/nodes/scraper.py:_attach_published_at
+    # et transmise telle quelle). None = date non confirmée (cf. migration 013).
+    source_published_at: Optional[datetime] = None
 
 
 class KoraState(TypedDict):

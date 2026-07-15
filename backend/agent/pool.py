@@ -16,6 +16,7 @@ philosophie que le verrou anti-doublon de cycle déjà en place).
 """
 import difflib
 import re
+from datetime import datetime, timezone
 from typing import Optional
 
 from core.logger import logger
@@ -174,7 +175,7 @@ async def run_pooling_job(trigger: str = "scheduled") -> dict:
     scraping de secours du cycle manuel (core/pool_lock.py).
     """
     from integrations.tavily_client import tavily_client
-    from agent.nodes.scraper import _fetch_content, _strip_boilerplate_prefix, _load_sources_from_db
+    from agent.nodes.scraper import _fetch_content, _strip_boilerplate_prefix, _load_sources_from_db, _parse_published_date
 
     job_id = await _create_job_row(trigger)
     logger.info("pool_job_started", job_id=job_id, trigger=trigger)
@@ -215,8 +216,8 @@ async def run_pooling_job(trigger: str = "scheduled") -> dict:
                     try:
                         result = await db.execute(
                             text("""
-                                INSERT INTO content_pool (source_url, source_name, title, content, title_norm)
-                                VALUES (:url, :source_name, :title, :content, :title_norm)
+                                INSERT INTO content_pool (source_url, source_name, title, content, title_norm, published_at)
+                                VALUES (:url, :source_name, :title, :content, :title_norm, :published_at)
                                 ON CONFLICT (source_url, collection_date) DO NOTHING
                                 RETURNING id
                             """),
@@ -226,6 +227,10 @@ async def run_pooling_job(trigger: str = "scheduled") -> dict:
                                 "title": title,
                                 "content": content,
                                 "title_norm": _normalize_title(title),
+                                # Date réelle de publication de la source (Tavily
+                                # published_date) — jamais générée, cf. migration
+                                # 013 et agent/nodes/scraper.py:_attach_published_at.
+                                "published_at": _parse_published_date(r.get("published_date")),
                             },
                         )
                         if result.mappings().first():
@@ -267,7 +272,7 @@ async def consume_pool_today() -> list[dict]:
     """
     async with get_db() as db:
         primaries = await db.execute(text("""
-            SELECT id, source_url, source_name, title, content, kora_label
+            SELECT id, source_url, source_name, title, content, kora_label, published_at
             FROM content_pool
             WHERE collection_date = CURRENT_DATE AND status = 'available' AND duplicate_of IS NULL
             ORDER BY collected_at
@@ -277,7 +282,7 @@ async def consume_pool_today() -> list[dict]:
         items = []
         for p in primary_rows:
             dups = await db.execute(text("""
-                SELECT source_url, source_name, title, content
+                SELECT source_url, source_name, title, content, published_at
                 FROM content_pool
                 WHERE duplicate_of = :pid AND collection_date = CURRENT_DATE AND status = 'available'
             """), {"pid": p["id"]})
@@ -291,8 +296,15 @@ async def consume_pool_today() -> list[dict]:
                 "content": p["content"],
                 "markdown_content": p["content"],
                 "kora_label": p["kora_label"],
+                # Date réelle de publication de la source primaire — jamais
+                # régénérée/déduite, cf. migration 013.
+                "published_at": p["published_at"],
                 "aggregated_sources": [
-                    {"url": d["source_url"], "source": d["source_name"], "title": d["title"], "content": d["content"]}
+                    {
+                        "url": d["source_url"], "source": d["source_name"],
+                        "title": d["title"], "content": d["content"],
+                        "published_at": d["published_at"],
+                    }
                     for d in aggregated
                 ],
             })

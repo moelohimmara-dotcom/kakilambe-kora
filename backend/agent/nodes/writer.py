@@ -9,6 +9,7 @@ pas devinée par le LLM — évite une mauvaise catégorisation sur le site live
 import json
 import random
 import re
+from datetime import date, datetime, timezone
 from agent.state import KoraState
 from agent.state import ArticleKORA
 from core.cycle_events import emit_log
@@ -393,6 +394,85 @@ def _validate_style(chapeau: str, corps: str) -> list[str]:
     return violations
 
 
+# ── Contrôle de cohérence de date (audit 2026-07-15) ───────────────────────
+# Root cause d'un incident réel constaté (article "Conakry organise
+# l'évacuation..." — le corps mentionnait "annoncée le 3 mars 2026" alors
+# que la source a été collectée et l'article rédigé un tout autre jour) :
+# rien ne vérifiait qu'une date CALENDAIRE explicite mentionnée dans le
+# texte généré correspond réellement à la date de publication de la source.
+# Le LLM n'est jamais interrogé sur une date (aucun champ "date" dans le
+# schéma JSON demandé, cf. _WRITE_PROMPT) — mais rien n'empêchait qu'il en
+# fasse mention en prose libre dans le chapeau/corps, avec un risque réel de
+# confusion entre la date de l'ÉVÉNEMENT et une date incohérente inventée
+# ou mal reformulée. Contrôle DÉTERMINISTE (aucun appel LLM) : extrait toute
+# date absolue au format "J mois AAAA" et la compare à source_published_at
+# — tolérance zéro, bloquant via le même circuit que _validate_style
+# (rejet + retry, puis échec définitif de l'article si non corrigé).
+_MOIS_FR = {
+    "janvier": 1, "février": 2, "fevrier": 2, "mars": 3, "avril": 4, "mai": 5,
+    "juin": 6, "juillet": 7, "août": 8, "aout": 8, "septembre": 9,
+    "octobre": 10, "novembre": 11, "décembre": 12, "decembre": 12,
+}
+_DATE_MENTION_RE = re.compile(
+    r"\b(\d{1,2})\s*(?:er)?\s+(" + "|".join(_MOIS_FR.keys()) + r")\s+(\d{4})\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_mentioned_dates(text: str) -> list[date]:
+    """Extrait toute date calendaire absolue explicitement écrite dans le texte."""
+    found = []
+    for m in _DATE_MENTION_RE.finditer(text or ""):
+        day_s, month_word, year_s = m.groups()
+        month = _MOIS_FR.get(month_word.lower())
+        try:
+            found.append(date(int(year_s), month, int(day_s)))
+        except ValueError:
+            continue
+    return found
+
+
+def _validate_date_consistency(chapeau: str, corps: str, source_published_at) -> list[str]:
+    """
+    Retourne les violations de cohérence de date — vide si aucune date
+    mentionnée, ou si toutes les dates mentionnées correspondent à la
+    source. Deux règles, toutes deux bloquantes :
+    1. Toute date mentionnée strictement future (par rapport à l'instant de
+       rédaction) est toujours invalide, que la source ait une date connue
+       ou non — un article ne peut jamais relater un fait "à venir" comme
+       déjà survenu.
+    2. Si la date réelle de publication de la source est connue
+       (source_published_at non None), toute date mentionnée doit
+       correspondre EXACTEMENT à son jour calendaire — tolérance zéro,
+       conformément à l'exigence explicite de fiabilité factuelle.
+    Si source_published_at est None (date non confirmée), seule la règle 1
+    s'applique : impossible de vérifier une cohérence contre une source
+    dont la date n'est elle-même pas connue, mais une date future reste
+    toujours détectable et bloquante.
+    """
+    violations = []
+    mentioned = _extract_mentioned_dates(f"{chapeau}\n{corps}")
+    if not mentioned:
+        return violations
+
+    today = datetime.now(timezone.utc).date()
+    source_date = source_published_at.date() if source_published_at else None
+
+    for d in mentioned:
+        if d > today:
+            violations.append(
+                f"date incohérente détectée dans le texte : {d.isoformat()} est dans le futur "
+                f"par rapport à la rédaction (contrôle bloquant, tolérance zéro)"
+            )
+        elif source_date is not None and d != source_date:
+            violations.append(
+                f"date incohérente détectée dans le texte : {d.isoformat()} ne correspond pas "
+                f"à la date réelle de publication de la source ({source_date.isoformat()}) — "
+                f"tolérance zéro"
+            )
+    return violations
+
+
 _MAX_RETRIES = 2
 
 # Repli si la base est indisponible — ne doit jamais faire planter un cycle,
@@ -518,6 +598,10 @@ async def _write_with_retry(article: dict) -> ArticleKORA:
     sources_section, url, source_nom = _build_sources_section(article)
     titre = article.get("title", "Article sans titre")
     editorial_identity, length_requirement = await _load_editorial_prompts()
+    # Date réelle de publication de la source — jamais générée, extraite en
+    # amont par le scraper (cf. agent/nodes/scraper.py:_attach_published_at)
+    # ou par la veille passive (agent/pool.py). None = date non confirmée.
+    source_published_at = article.get("published_at")
 
     # Créditation transparente des sources agrégées (règle de gouvernance
     # éditoriale n°4 : un article de synthèse cross-média doit nommer
@@ -587,6 +671,15 @@ async def _write_with_retry(article: dict) -> ArticleKORA:
             corps_signed = _append_signature(corps_fixed_headers)
 
             violations = _validate_style(chapeau, corps_signed)
+            date_violations = _validate_date_consistency(chapeau, corps_signed, source_published_at)
+            if date_violations:
+                logger.warning(
+                    "writer_date_inconsistency_detected",
+                    attempt=attempt,
+                    violations=date_violations,
+                    source_published_at=source_published_at.isoformat() if source_published_at else None,
+                )
+            violations += date_violations
             if violations:
                 logger.warning(
                     "writer_style_rejected",
@@ -642,6 +735,7 @@ async def _write_with_retry(article: dict) -> ArticleKORA:
                 image_prompt=data.get("image_prompt", f"Journalistic photo for article: {titre}"),
                 llm_provider_used=provider_used,
                 llm_model_used=model_used,
+                source_published_at=source_published_at,
             )
             return article_obj
 
@@ -734,12 +828,12 @@ async def _save_to_db(article: dict, cycle_id: str, mode: str = "semi") -> str:
                     titre, chapeau, corps, meta_description, mots_cles,
                     categorie_id, source_url, source_nom, image_prompt,
                     llm_provider_used, llm_model_used,
-                    status, origin, cycle_id
+                    status, origin, cycle_id, source_published_at
                 ) VALUES (
                     :titre, :chapeau, :corps, :meta_description, :mots_cles,
                     :categorie_id, :source_url, :source_nom, :image_prompt,
                     :llm_provider_used, :llm_model_used,
-                    :status, :origin, :cycle_id
+                    :status, :origin, :cycle_id, :source_published_at
                 ) RETURNING id
                 """),
                 {
@@ -757,6 +851,9 @@ async def _save_to_db(article: dict, cycle_id: str, mode: str = "semi") -> str:
                     "status":          status,
                     "origin":          origin,
                     "cycle_id":        cycle_id,
+                    # Date réelle de publication de la source — jamais générée
+                    # par le LLM, NULL si non confirmée (cf. migration 013).
+                    "source_published_at": article.get("source_published_at"),
                 },
             )
             return str(result.scalar())

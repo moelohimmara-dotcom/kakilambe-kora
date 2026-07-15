@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -7,6 +8,50 @@ from db.connection import get_db
 from core.logger import logger
 
 router = APIRouter()
+
+_MOIS_FR_ABBREV = [
+    "janv.", "févr.", "mars", "avr.", "mai", "juin",
+    "juil.", "août", "sept.", "oct.", "nov.", "déc.",
+]
+
+
+def _format_date_fr(d) -> str:
+    return f"{d.day} {_MOIS_FR_ABBREV[d.month - 1]} {d.year}"
+
+
+def _compute_date_label(source_published_at) -> dict:
+    """
+    Label relatif Aujourd'hui/Hier/date exacte, calculé côté backend à
+    partir de la SEULE date réelle de la source (jamais created_at,
+    l'horodatage d'écriture de KORA) — comparaison en UTC, qui correspond
+    au fuseau de référence de l'app (Guinée/Conakry = UTC+0, sans heure
+    d'été, cf. contrainte explicite). Recalculé à chaque requête : se
+    resynchronise donc naturellement chaque jour, sans tâche de fond.
+    Si aucune date source fiable n'existe (source_published_at NULL),
+    renvoie explicitement "date non confirmée" plutôt que de fabriquer une
+    valeur à partir d'un horodatage qui n'est pas celui de la publication.
+    """
+    if source_published_at is None:
+        return {"date_label": "Date non confirmée", "date_confirmed": False}
+
+    today = datetime.now(timezone.utc).date()
+    d = source_published_at.date() if hasattr(source_published_at, "date") else source_published_at
+    delta_days = (today - d).days
+
+    if delta_days == 0:
+        label = "Aujourd'hui"
+    elif delta_days == 1:
+        label = "Hier"
+    else:
+        label = _format_date_fr(d)
+
+    return {"date_label": label, "date_confirmed": True}
+
+
+def _with_date_label(row: dict) -> dict:
+    row = dict(row)
+    row.update(_compute_date_label(row.get("source_published_at")))
+    return row
 
 
 class ArticlePatch(BaseModel):
@@ -28,7 +73,7 @@ async def list_articles(
             result = await db.execute(
                 text("""
                     SELECT id, titre, chapeau, status, origin, source_nom,
-                           created_at, published_at, wp_url, image_url,
+                           created_at, published_at, source_published_at, wp_url, image_url,
                            mots_cles, categorie_id, cycle_id,
                            array_length(string_to_array(corps, ' '), 1) AS word_count
                     FROM articles
@@ -46,7 +91,7 @@ async def list_articles(
             result = await db.execute(
                 text("""
                     SELECT id, titre, chapeau, status, origin, source_nom,
-                           created_at, published_at, wp_url, image_url,
+                           created_at, published_at, source_published_at, wp_url, image_url,
                            mots_cles, categorie_id, cycle_id,
                            array_length(string_to_array(corps, ' '), 1) AS word_count
                     FROM articles
@@ -60,7 +105,7 @@ async def list_articles(
         rows = result.mappings().all()
         total = count_result.scalar()
 
-    return {"items": [dict(r) for r in rows], "total": total, "page": page}
+    return {"items": [_with_date_label(r) for r in rows], "total": total, "page": page}
 
 
 @router.get("/{article_id}")
@@ -73,7 +118,7 @@ async def get_article(article_id: str):
         row = result.mappings().first()
     if not row:
         raise HTTPException(status_code=404, detail="Article not found")
-    return dict(row)
+    return _with_date_label(row)
 
 
 @router.patch("/{article_id}")
@@ -203,7 +248,7 @@ async def regenerate_article(article_id: str):
     async with get_db() as db:
         raw = await db.execute(
             text("""
-                SELECT title, content FROM raw_feeds
+                SELECT title, content, published_at FROM raw_feeds
                 WHERE batch_id = :cycle_id AND source_url = :source_url
                 LIMIT 1
             """),
@@ -223,6 +268,9 @@ async def regenerate_article(article_id: str):
         "content": raw_row["content"] or "",
         "source": row["source_nom"],
         "aggregated_sources": [],  # non reconstitué — régénération mono-source
+        # Date réelle de la source, journalisée au scraping original — la
+        # régénération ne doit jamais la perdre ni la redéduire à froid.
+        "published_at": raw_row["published_at"],
     }
 
     from agent.nodes.writer import _write_with_retry
