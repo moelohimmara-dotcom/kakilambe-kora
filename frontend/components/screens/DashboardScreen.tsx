@@ -3,6 +3,7 @@
 import { useCallback } from 'react'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/Badge'
+import { DateBadge } from '@/components/ui/DateBadge'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
@@ -284,12 +285,18 @@ function ArticleRow({ article }: { article: Article }) {
           <p className="font-heading font-semibold text-[13px] text-anthracite truncate">
             {article.titre}
           </p>
-          <p className="font-heading text-[11px] text-gray-dk mt-0.5 truncate">
-            {article.source_nom ?? '—'} · {formatRelative(article.created_at)}
-          </p>
+          <div className="flex items-center gap-1.5 mt-1 min-w-0">
+            <p className="font-heading text-[11px] text-gray-dk truncate">
+              {article.source_nom ?? '—'} · {formatRelative(article.created_at)}
+            </p>
+            {article.date_label && (
+              <DateBadge label={article.date_label} confirmed={!!article.date_confirmed} className="shrink-0" />
+            )}
+          </div>
         </div>
 
-        {/* Status */}
+        {/* Statut éditorial — distinct du DateBadge ci-dessus (rempli/coloré
+            vs contour) pour qu'aucune des deux informations ne soit confondue. */}
         <Badge variant={statusVariant(article.status)} className="shrink-0">
           {statusLabel(article.status)}
         </Badge>

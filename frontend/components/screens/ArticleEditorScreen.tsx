@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import ReactMarkdown from 'react-markdown'
 import { Archive, Pencil, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
+import { DateBadge } from '@/components/ui/DateBadge'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Spinner } from '@/components/ui/Spinner'
@@ -138,11 +139,16 @@ export function ArticleEditorScreen({ id }: { id: string }) {
       {/* Top bar */}
       <div className={`${stickyBar.className} bg-white/90 backdrop-blur-sm border-b border-gray-light px-6 py-3 flex items-center gap-4`}>
         <Button href="/articles" variant="ghost" size="sm">← Retour</Button>
-        <div className="flex-1 min-w-0">
-          <span className="font-heading text-[12px] text-gray-dk truncate block">
+        <div className="flex-1 min-w-0 flex items-center gap-2">
+          <span className="font-heading text-[12px] text-gray-dk truncate">
             {article.source_nom ?? '—'} · {formatDate(article.created_at)}
           </span>
+          {article.date_label && (
+            <DateBadge label={article.date_label} confirmed={!!article.date_confirmed} className="shrink-0" />
+          )}
         </div>
+        {/* Statut éditorial — distinct du DateBadge ci-dessus (rempli/coloré
+            vs contour) pour qu'aucune des deux informations ne soit confondue. */}
         <Badge variant={statusVariant(article.status)}>
           {statusLabel(article.status)}
         </Badge>
@@ -322,6 +328,7 @@ export function ArticleEditorScreen({ id }: { id: string }) {
               <MetaRow label="Mots" value={article.corps ? wordCount(article.corps).toString() : '—'} />
               <MetaRow label="Source" value={article.source_nom ?? '—'} />
               <MetaRow label="Modèle LLM" value={article.llm_provider_used ?? '—'} />
+              <MetaRow label="Date source" value={article.date_label ?? 'Date non confirmée'} />
               <MetaRow label="Créé" value={formatDate(article.created_at)} />
               {article.published_at && (
                 <MetaRow label="Publié" value={formatDate(article.published_at)} />

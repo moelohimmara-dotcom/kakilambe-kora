@@ -27,6 +27,13 @@ export interface Article {
   cycle_id?: string
   created_at: string
   published_at?: string
+  // Date réelle de publication de la source (jamais générée par le LLM,
+  // null si non confirmée — cf. migration 013 backend). date_label/
+  // date_confirmed sont calculés côté backend (article_routes.py) à partir
+  // de ce seul champ, jamais de created_at.
+  source_published_at?: string | null
+  date_label?: string
+  date_confirmed?: boolean
 }
 
 export interface Provider {

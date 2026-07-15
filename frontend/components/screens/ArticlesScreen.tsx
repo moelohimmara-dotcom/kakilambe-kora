@@ -4,6 +4,7 @@ import { useState, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Trash2, Archive, Check, X, Pencil } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
+import { DateBadge } from '@/components/ui/DateBadge'
 import { Card } from '@/components/ui/Card'
 import { Spinner } from '@/components/ui/Spinner'
 import { ProgressRing } from '@/components/ui/ProgressRing'
@@ -269,9 +270,14 @@ function ArticleCard({
           </p>
         )}
 
-        <span className="font-heading text-[11px] text-gray-med mb-3">
-          {article.source_nom ?? '—'} · {formatRelative(article.created_at)}
-        </span>
+        <div className="flex items-center flex-wrap gap-x-1.5 gap-y-1 mb-3">
+          <span className="font-heading text-[11px] text-gray-med">
+            {article.source_nom ?? '—'} · {formatRelative(article.created_at)}
+          </span>
+          {article.date_label && (
+            <DateBadge label={article.date_label} confirmed={!!article.date_confirmed} />
+          )}
+        </div>
 
         {article.status === 'PUBLISHED' && article.wp_url && (
           <a
