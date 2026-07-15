@@ -11,6 +11,7 @@ import { Spinner } from '@/components/ui/Spinner'
 import { useAsync, useMutation } from '@/lib/hooks'
 import { useToast } from '@/lib/contexts/ToastContext'
 import { settingsApi, providerApi, healthApi, accountApi } from '@/lib/api'
+import { themeOverride } from '@/lib/theme/themeOverride'
 import type { SystemPrompt, Provider, AppSettings, WpCategory, KoraCategoryLabel } from '@/lib/types'
 
 type Tab = 'wordpress' | 'categories' | 'prompts' | 'providers' | 'compte'
@@ -887,6 +888,13 @@ function ThemeSection({ currentTheme, onSaved }: { currentTheme: 'light' | 'dark
     // visuel), puis persistance backend — la source de vérité reste la DB,
     // relue à chaque chargement (cf. AccountThemeSync dans app/layout.tsx),
     // pas seulement le cache local de next-themes.
+    //
+    // themeOverride marqué AVANT setTheme : si le fetch de resynchronisation
+    // d'AccountThemeSync (lancé au montage de la page) est encore en vol, il
+    // ne doit pas écraser ce choix avec l'ancienne valeur backend qu'il a lue
+    // avant ce clic — cf. lib/theme/themeOverride.ts pour le détail de la
+    // course observée en conditions réelles.
+    themeOverride.current = true
     setTheme(t)
     const result = await mutate(t)
     if (result) {

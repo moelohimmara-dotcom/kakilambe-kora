@@ -3,6 +3,7 @@
 import { useEffect } from 'react'
 import { useTheme } from 'next-themes'
 import { accountApi } from '@/lib/api'
+import { themeOverride } from '@/lib/theme/themeOverride'
 
 // Root cause à éviter (cf. exemple "comportement_a_eviter" de la demande) :
 // un thème stocké seulement en localStorage navigateur rend impossible
@@ -18,9 +19,13 @@ export function AccountThemeSync() {
 
   useEffect(() => {
     let cancelled = false
+    themeOverride.current = false
     accountApi.me()
       .then(account => {
-        if (!cancelled) setTheme(account.theme)
+        // Si un changement manuel a eu lieu pendant que cette requête était
+        // en vol, cette réponse est déjà obsolète — l'appliquer reviendrait
+        // à écraser un choix plus récent (cf. themeOverride.ts).
+        if (!cancelled && !themeOverride.current) setTheme(account.theme)
       })
       .catch(() => {
         // Non authentifié ou erreur réseau — laisse next-themes sur sa
