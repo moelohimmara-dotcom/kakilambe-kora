@@ -73,7 +73,8 @@ async def cycles_stats():
                     COUNT(*) AS total_cycles,
                     COALESCE(SUM(articles_published), 0) AS total_published,
                     COUNT(*) FILTER (WHERE status = 'FAILED') AS total_failed,
-                    COUNT(*) FILTER (WHERE status = 'COMPLETED') AS total_completed
+                    COUNT(*) FILTER (WHERE status = 'COMPLETED') AS total_completed,
+                    COUNT(*) FILTER (WHERE status IN ('RUNNING', 'PAUSED')) AS total_running
                 FROM cycles
             """)
         )
@@ -86,6 +87,8 @@ async def cycles_stats():
         "total_cycles": total_cycles,
         "total_published": int(row["total_published"]),
         "total_failed": int(row["total_failed"]),
+        "total_completed": int(row["total_completed"]),
+        "total_running": int(row["total_running"]),
         "success_rate": success_rate,
     }
 

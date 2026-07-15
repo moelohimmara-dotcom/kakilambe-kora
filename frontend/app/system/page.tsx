@@ -14,7 +14,7 @@ interface AggregatedHealth {
   status: string
   version: string
   db: boolean
-  redis: boolean
+  redis: 'ok' | 'error' | 'not_used'
   wordpress: boolean
 }
 
@@ -71,12 +71,21 @@ function ProviderGauge({ provider }: { provider: Provider }) {
   )
 }
 
-function ServiceBadge({ label, ok }: { label: string; ok: boolean }) {
+// 'not_used' — root cause corrigée (audit 2026-07-15) : /health/redis
+// renvoyait "ok" en dur sans connexion réelle (Redis a été retiré de
+// l'architecture, remplacé par Supabase provider_states). Un badge
+// "OK" vert y aurait fait croire à un service réellement vérifié — un
+// troisième état neutre (gris, "N/A") reflète honnêtement "non utilisé
+// par cette architecture", distinct de "vérifié fonctionnel" (vert) et
+// "vérifié en échec" (rouge).
+function ServiceBadge({ label, status }: { label: string; status: 'ok' | 'error' | 'not_used' }) {
+  const color = status === 'ok' ? '#48bb78' : status === 'not_used' ? SYS_MUTED : SYS_RED
+  const text = status === 'ok' ? 'OK' : status === 'not_used' ? 'N/A' : 'KO'
   return (
     <div className="flex items-center gap-2 px-3 py-2 rounded-md border" style={{ borderColor: SYS_BORDER, background: SYS_SURFACE }}>
-      <span className="w-2 h-2 rounded-full shrink-0" style={{ background: ok ? '#48bb78' : SYS_RED }} />
+      <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
       <span className="font-mono text-[12px]" style={{ color: SYS_TEXT }}>{label}</span>
-      <span className="ml-auto font-mono text-[10px]" style={{ color: ok ? '#48bb78' : SYS_RED }}>{ok ? 'OK' : 'KO'}</span>
+      <span className="ml-auto font-mono text-[10px]" style={{ color }}>{text}</span>
     </div>
   )
 }
@@ -100,7 +109,7 @@ export default function SystemDashboardPage() {
         version: h.version,
         db: h.services?.db === 'ok',
         wordpress: h.services?.wordpress === 'ok',
-        redis: redisRes.status === 'fulfilled' ? redisRes.value.status === 'ok' : false,
+        redis: redisRes.status === 'fulfilled' ? (redisRes.value.status as 'ok' | 'error' | 'not_used') : 'error',
       })
     } else {
       setHealth(null)
@@ -137,10 +146,10 @@ export default function SystemDashboardPage() {
       </div>
       <h2 className="font-mono text-[11px] uppercase tracking-widest mb-3" style={{ color: SYS_MUTED }}>Services</h2>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-8">
-        <ServiceBadge label="Redis"     ok={health?.redis     ?? false} />
-        <ServiceBadge label="Supabase"  ok={health?.db        ?? false} />
-        <ServiceBadge label="WordPress" ok={health?.wordpress ?? false} />
-        <ServiceBadge label="API KORA"  ok={health !== null} />
+        <ServiceBadge label="Redis"     status={health?.redis ?? 'not_used'} />
+        <ServiceBadge label="Supabase"  status={health?.db        ? 'ok' : 'error'} />
+        <ServiceBadge label="WordPress" status={health?.wordpress ? 'ok' : 'error'} />
+        <ServiceBadge label="API KORA"  status={health !== null   ? 'ok' : 'error'} />
       </div>
       <h2 className="font-mono text-[11px] uppercase tracking-widest mb-3" style={{ color: SYS_MUTED }}>Fournisseurs LLM — chaîne de fallback</h2>
       {loading ? (

@@ -16,32 +16,15 @@ ces routes (pas un refactor global de l'auth existante, hors périmètre de
 cette tâche).
 """
 from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 from typing import Optional
 
 from core.logger import logger
-from core.security import verify_session_token
+from core.admin_auth import require_admin
 from db.connection import get_db
 
 router = APIRouter()
-
-ADMIN_COOKIE = "kora_admin_token"
-
-
-async def require_admin(request: Request) -> dict:
-    token = request.cookies.get(ADMIN_COOKIE)
-    payload = verify_session_token(token) if token else None
-    if not payload:
-        raise HTTPException(status_code=401, detail="Non authentifié")
-
-    async with get_db() as db:
-        result = await db.execute(text("SELECT id, role FROM users WHERE id = :id"), {"id": payload["sub"]})
-        user = result.mappings().first()
-    if not user or user["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
-    return dict(user)
 
 
 @router.get("/status")
@@ -118,8 +101,20 @@ async def pool_update_settings(body: PoolSettingsUpdate, request: Request):
 
     if body.pool_interval_hours is not None and body.pool_interval_hours < 1:
         raise HTTPException(status_code=400, detail="La fréquence doit être d'au moins 1 heure")
-    if body.pool_dedup_threshold is not None and not (0 < body.pool_dedup_threshold <= 1):
-        raise HTTPException(status_code=400, detail="Le seuil de déduplication doit être entre 0 et 1")
+    # Root cause corrigée (audit 2026-07-15, découverte via le flux de logs
+    # temps réel /stream/logs) : la plage 0-1 acceptait littéralement une
+    # valeur comme 0.06, saisie par erreur au lieu de 0.6 — un seuil aussi
+    # bas fait matcher presque n'importe quelle paire de titres via
+    # difflib.SequenceMatcher (observé en conditions réelles : "CNOSG..."
+    # lié à tort à "Résultats du BEPC..." avec un ratio de seulement 0.331),
+    # cassant silencieusement la déduplication sans qu'aucune erreur ne
+    # soit jamais levée. Plage resserrée à ce qui a un sens pratique pour
+    # une comparaison de titres normalisés.
+    if body.pool_dedup_threshold is not None and not (0.3 <= body.pool_dedup_threshold <= 0.95):
+        raise HTTPException(
+            status_code=400,
+            detail="Le seuil de déduplication doit être entre 0.3 et 0.95 (en dessous, presque tous les titres sont liés à tort)",
+        )
 
     async with get_db() as db:
         if body.pool_interval_hours is not None:

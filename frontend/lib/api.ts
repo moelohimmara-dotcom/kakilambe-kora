@@ -91,9 +91,10 @@ export const cycleApi = {
   // Agrégats réels sur TOUS les cycles (pas seulement la page 1 de list()) —
   // voir backend/api/cycle_routes.py:22 pour l'écart que ça corrige.
   stats: () =>
-    request<{ total_cycles: number; total_published: number; total_failed: number; success_rate: number }>(
-      '/api/cycles/stats'
-    ),
+    request<{
+      total_cycles: number; total_published: number; total_failed: number;
+      total_completed: number; total_running: number; success_rate: number
+    }>('/api/cycles/stats'),
 }
 
 // ── Providers ─────────────────────────────────────────────────────────────────
@@ -230,4 +231,29 @@ export const poolApi = {
     request<{ ok: boolean; pool_rows_deleted: number; job_rows_deleted: number }>(
       '/api/pool/admin/reset', { method: 'POST' }
     ),
+}
+
+// ── Registre d'intégrations ───────────────────────────────────────────────────
+// Remplace le tableau figé (INITIAL_SERVICES) auparavant codé en dur dans
+// connections/page.tsx — source unique en base (migration 012), extensible
+// par simple ajout de ligne (POST), jamais en modifiant le code d'orchestration.
+export interface Integration {
+  id: string
+  key: string
+  label: string
+  kind: 'llm' | 'api' | 'mcp' | 'other'
+  description: string | null
+  health_endpoint: string
+  is_active: boolean
+  created_at: string
+  status: 'ok' | 'error' | 'not_used'
+  detail: string
+}
+
+export const integrationsApi = {
+  list: () => request<{ integrations: Integration[] }>('/api/integrations'),
+  create: (data: { key: string; label: string; kind: string; description?: string; health_endpoint: string }) =>
+    request<{ ok: boolean; id: string }>('/api/integrations', { method: 'POST', body: JSON.stringify(data) }),
+  remove: (id: string) =>
+    request<{ ok: boolean }>(`/api/integrations/${id}`, { method: 'DELETE' }),
 }

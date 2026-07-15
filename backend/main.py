@@ -24,6 +24,7 @@ from api.provider_routes import router as provider_router
 from api.settings_routes import router as settings_router
 from api.webhook_routes import router as webhook_router
 from api.pool_routes import router as pool_router
+from api.integrations_routes import router as integrations_router
 
 
 @asynccontextmanager
@@ -68,6 +69,7 @@ app.include_router(provider_router, prefix="/api/providers",tags=["providers"])
 app.include_router(settings_router, prefix="/api/settings", tags=["settings"])
 app.include_router(webhook_router,  prefix="/api/webhooks", tags=["webhooks"])
 app.include_router(pool_router,     prefix="/api/pool",     tags=["pool"])
+app.include_router(integrations_router, prefix="/api/integrations", tags=["integrations"])
 
 @app.get("/health", tags=["system"])
 async def health():
@@ -119,8 +121,51 @@ async def health_database():
 
 @app.get("/health/redis", tags=["system"])
 async def health_redis():
-    """Redis remplacé par Supabase provider_states — toujours OK."""
-    return {"status": "ok", "detail": "redis replaced by supabase provider_states"}
+    """
+    Root cause corrigée (audit 2026-07-15) : cette route renvoyait "ok" en
+    dur sans la moindre connexion réelle, alors que Redis a été retiré de
+    l'architecture (remplacé par Supabase provider_states, cf. commentaire
+    migration 001). Le badge "Redis: OK" affiché sur /system dashboard
+    était donc un mensonge fidèlement relayé par le frontend. Renvoie
+    désormais "not_used" — statut honnête distinct de "ok"/"error", que le
+    frontend affiche en gris neutre plutôt qu'en vert trompeur.
+    """
+    return {"status": "not_used", "detail": "Redis n'est pas utilisé dans cette architecture (remplacé par Supabase provider_states)"}
+
+
+@app.get("/stream/logs", tags=["system"])
+async def stream_logs():
+    """
+    Flux SSE global — TOUS les logs structurés du backend (veille passive,
+    cycles, scraping, fournisseurs LLM avec bascules de fallback,
+    publication WordPress), diffusés en temps réel dès qu'ils sont émis via
+    core/logger.py (cf. core/log_stream.py). Contrairement à
+    /api/agent/stream (core/cycle_events.py), scoped à un cycle_id unique,
+    ce flux est global et ne nécessite aucun paramètre.
+    """
+    from fastapi.responses import StreamingResponse
+    from core.log_stream import subscribe, unsubscribe
+    import json as _json
+    import asyncio as _asyncio
+
+    async def event_generator():
+        queue = subscribe()
+        try:
+            yield "retry: 3000\n\n"
+            while True:
+                try:
+                    record = await _asyncio.wait_for(queue.get(), timeout=15)
+                    yield f"data: {_json.dumps(record, ensure_ascii=False, default=str)}\n\n"
+                except _asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+        finally:
+            unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 @app.get("/health/wordpress", tags=["system"])
 async def health_wordpress():

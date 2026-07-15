@@ -49,12 +49,24 @@ export default function CyclesPage() {
   const [cycles, setCycles]  = useState<Cycle[]>([])
   const [loading, setLoading] = useState(true)
   const [page, setPage]      = useState(0)
+  // Root cause corrigée (audit 2026-07-15) : ces KPI étaient calculés
+  // côté client à partir de `cycles` (page 1 seulement, cf. cycleApi.list()),
+  // donc systématiquement faux dès qu'il existe plus de cycles que la
+  // pagination — même piège déjà documenté dans cycle_routes.py:62-67 pour
+  // /history. GET /api/cycles/stats agrège sur TOUTE la table `cycles`.
+  const [stats, setStats] = useState({ total: 0, completed: 0, failed: 0, running: 0 })
   const PER_PAGE = 20
 
   const load = useCallback(async () => {
     try {
-      const data = await cycleApi.list()
+      const [data, statsData] = await Promise.all([cycleApi.list(), cycleApi.stats()])
       setCycles(Array.isArray(data) ? data : (data as { items: Cycle[] }).items ?? [])
+      setStats({
+        total: statsData.total_cycles,
+        completed: statsData.total_completed,
+        failed: statsData.total_failed,
+        running: statsData.total_running,
+      })
     } catch { /* stale */ }
     setLoading(false)
   }, [])
@@ -63,13 +75,6 @@ export default function CyclesPage() {
 
   const paginated = cycles.slice(page * PER_PAGE, (page + 1) * PER_PAGE)
   const totalPages = Math.ceil(cycles.length / PER_PAGE)
-
-  const stats = {
-    total:     cycles.length,
-    completed: cycles.filter(c => c.status === 'COMPLETED').length,
-    failed:    cycles.filter(c => c.status === 'FAILED').length,
-    running:   cycles.filter(c => c.status === 'RUNNING' || c.status === 'PAUSED').length,
-  }
 
   return (
     <div className="max-w-5xl">
